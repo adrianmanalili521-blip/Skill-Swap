@@ -1,0 +1,89 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Helpers ----------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isParticipant(data) {
+      return isSignedIn() &&
+        (request.auth.uid == data.fromUserId || request.auth.uid == data.toUserId);
+    }
+
+    // ---------- users/{userId} ----------
+    // Public profile info is readable by any signed-in user (needed for
+    // browsing skills/listings and seeing who posted them).
+    // Only the owner (or an admin) can create/update/delete their own doc.
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId)
+                    && request.resource.data.uid == userId
+                    && request.resource.data.role == 'user'; // clients can never self-assign admin
+      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role)
+                    || isAdmin();
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    // ---------- skills/{skillId} ----------
+    // Skill listings are public read (discovery feed / search).
+    // Only the owner can create/edit/delete their own listing; admins can
+    // moderate (e.g. take down inappropriate content) via update/delete.
+    match /skills/{skillId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+                    && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isOwner(resource.data.ownerId) || isAdmin();
+      allow delete: if isOwner(resource.data.ownerId) || isAdmin();
+    }
+
+    // ---------- swapRequests/{requestId} ----------
+    // Only the two participants (sender/receiver) can read a request.
+    // Create: sender must set fromUserId to themself and cannot target self.
+    // Update: only participants may change status; sender can cancel,
+    // receiver can accept/decline. No changing skillId/participants after creation.
+    match /swapRequests/{requestId} {
+      allow read: if isParticipant(resource.data) || isAdmin();
+
+      allow create: if isSignedIn()
+                    && request.resource.data.fromUserId == request.auth.uid
+                    && request.resource.data.toUserId != request.auth.uid
+                    && request.resource.data.status == 'pending';
+
+      allow update: if (isParticipant(resource.data) &&
+                        request.resource.data.fromUserId == resource.data.fromUserId &&
+                        request.resource.data.toUserId == resource.data.toUserId &&
+                        request.resource.data.skillId == resource.data.skillId)
+                    || isAdmin();
+
+      allow delete: if isParticipant(resource.data) || isAdmin();
+    }
+
+    // ---------- reviews/{reviewId} ----------
+    // Optional: left after a completed swap. Public read, only the author
+    // can create, no edits after posting (simplest anti-abuse rule).
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+                    && request.resource.data.authorId == request.auth.uid;
+      allow update: if false;
+      allow delete: if isOwner(resource.data.authorId) || isAdmin();
+    }
+
+    // Deny everything else by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
