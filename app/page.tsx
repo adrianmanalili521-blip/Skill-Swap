@@ -1,17 +1,23 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { getAuthErrorMessage } from "@/lib/auth-errors";
 
 type AuthMode = "signin" | "signup";
 
 export default function Home() {
-  const { user, loading, signIn, signUp, signInWithGoogle, signOut } = useAuth();
+  const { user, loading, signIn, signUp, signInWithGoogle } = useAuth();
+  const router = useRouter();
   const [mode, setMode] = useState<AuthMode>("signin");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!loading && user) router.replace("/dashboard");
+  }, [loading, router, user]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -41,19 +47,6 @@ export default function Home() {
 
     try {
       await signInWithGoogle();
-    } catch (authError) {
-      setError(getAuthErrorMessage(authError));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleSignOut() {
-    setError(null);
-    setSubmitting(true);
-
-    try {
-      await signOut();
     } catch (authError) {
       setError(getAuthErrorMessage(authError));
     } finally {
@@ -105,15 +98,9 @@ export default function Home() {
               <span>Checking your session</span>
             </div>
           ) : user ? (
-            <div className="signed-in-view">
-              <span className="signed-in-mark" aria-hidden="true">✓</span>
-              <p className="eyebrow">You&apos;re all set</p>
-              <h2>Welcome{user.displayName ? `, ${user.displayName}` : " back"}.</h2>
-              <p className="form-description">Signed in as {user.email}.</p>
-              {error && <p className="form-error" role="alert">{error}</p>}
-              <button className="submit-button" onClick={handleSignOut} disabled={submitting}>
-                {submitting ? "Signing out..." : "Sign out"}
-              </button>
+            <div className="session-check" role="status">
+              <span className="loading-indicator" />
+              <span>Opening your dashboard</span>
             </div>
           ) : (
             <>
