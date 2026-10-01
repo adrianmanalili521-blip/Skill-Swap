@@ -6,6 +6,7 @@
 import { FirebaseError } from "firebase/app";
 
 const MESSAGES: Record<string, string> = {
+  "auth/invalid-api-key": "Firebase rejected this app's API key. Check NEXT_PUBLIC_FIREBASE_API_KEY in .env.local.",
   "auth/email-already-in-use": "An account with this email already exists.",
   "auth/invalid-email": "Please enter a valid email address.",
   "auth/weak-password": "Password should be at least 6 characters.",
@@ -15,6 +16,7 @@ const MESSAGES: Record<string, string> = {
   "auth/too-many-requests": "Too many attempts. Please try again later.",
   "auth/popup-closed-by-user": "Sign-in was cancelled.",
   "auth/network-request-failed": "Network error. Check your connection and try again.",
+  "auth/operation-not-allowed": "This sign-in method is not enabled in Firebase Authentication settings.",
 };
 
 export function getAuthErrorMessage(err: unknown): string {
