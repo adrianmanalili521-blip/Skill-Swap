@@ -147,6 +147,7 @@ export default function DashboardPage() {
         <section className="dashboard-welcome">
           <p className="dashboard-eyebrow">YOUR SKILL SWAP</p>
           <h1>Welcome, {displayName}.</h1>
+		  <h2> testing staging environment</h2>
           <p>Make room for something new by sharing what you know.</p>
         </section>
 
