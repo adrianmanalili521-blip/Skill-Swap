@@ -5,11 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { getAuthErrorMessage } from "@/lib/auth-errors";
+import { useTheme } from "@/lib/theme-context";
 
 type AuthMode = "signin" | "signup";
 
 export default function Home() {
   const { user, loading, signIn, signUp, signInWithGoogle } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const router = useRouter();
   const [mode, setMode] = useState<AuthMode>("signin");
   const [submitting, setSubmitting] = useState(false);
@@ -54,6 +56,14 @@ export default function Home() {
     }
   }
 
+  async function handleThemeToggle() {
+    try {
+      await toggleTheme();
+    } catch {
+      setError("Theme changed on this device, but account sync was unavailable.");
+    }
+  }
+
   return (
     <main className="auth-shell">
       <aside className="welcome-panel">
@@ -90,6 +100,9 @@ export default function Home() {
       </aside>
 
       <section className="form-panel" aria-label="Account access">
+        <button className="auth-theme-toggle" type="button" onClick={handleThemeToggle} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}>
+          <span aria-hidden="true">{theme === "light" ? "◐" : "☀"}</span>
+        </button>
         <div className="form-wrap">
           <div className="mobile-brand" aria-hidden="true">skill swap</div>
           {loading ? (
