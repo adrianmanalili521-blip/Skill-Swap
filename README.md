@@ -6,11 +6,15 @@ Skill Swap is a cashless community marketplace where people share what they can 
 
 - Firebase Authentication with email/password and Google sign-in.
 - Authenticated landing page at `/dashboard`; signed-out users are redirected to sign-in.
-- Profile summary and editing for bio, skills offered, and learning goals.
+- Editable member profiles with bios, skill tags, and learning goals.
+- Public member profile pages linked from skill listings.
+- Skill listing creation, editing, pausing, resuming, and deletion.
+- Skill discovery with keyword and category filters.
+- Light/dark mode with per-device and per-account preference persistence.
 - User profile documents stored at `users/{uid}` in Cloud Firestore.
 - Firestore rules and composite indexes defined in `firestore.rules` and `firestore.indexes.json`.
 
-The profile's `skillsOffered` and `learningGoals` fields are arrays edited as comma-separated text. They are profile tags, not full skill listing records. Listing CRUD, discovery/search, theme persistence, swap requests, real-time updates, and the admin panel are not implemented yet.
+The profile's `skillsOffered` and `learningGoals` fields are arrays edited as comma-separated text. They are profile tags, separate from full skill listing records. Swap requests, real-time updates, and the admin panel remain planned for later sprints.
 
 ## Prerequisites
 
@@ -67,7 +71,9 @@ The profile's `skillsOffered` and `learningGoals` fields are arrays edited as co
 
 - New users register from `/` with a display name, email, and password, or use Google sign-in.
 - On successful authentication, the app ensures a matching `users/{uid}` Firestore document exists, then routes to `/dashboard`.
-- The dashboard loads the user's profile. Users can edit their bio, skills offered, and learning goals; the display name and email come from Firebase Authentication.
+- The dashboard provides discovery, listing management, and profile views. Skill discovery filters active listings by keyword or category. Users can edit their bio, skill tags, and learning goals; the display name and email come from Firebase Authentication.
+- Listing owners can create, edit, pause, resume, and delete their skill listings. Selecting an owner opens their public profile.
+- Theme preference is stored locally and, when signed in, synced to `users/{uid}.theme`.
 - Signing out returns the user to `/`. Direct visits to `/dashboard` require an authenticated Firebase user.
 
 If signup succeeds but the profile write fails, the Auth account may still exist. Try signing in with that account after Firestore is available rather than registering again.
