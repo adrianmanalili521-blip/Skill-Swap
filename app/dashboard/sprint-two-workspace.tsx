@@ -215,7 +215,7 @@ export default function SprintTwoWorkspace() {
         </div>
       </header>
       <div className="dashboard-main">
-        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? "Find your next exchange." : view === "listings" ? "Share what you know." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : "A good exchange starts with a little context about you."}</p></section>
+        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? "Find your next exchange." : view === "listings" ? "Share what you know." : `Welcome, ${displayName}.`}</h1><p>{view === "discover" ? "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : "A good exchange starts with a little context about you."}</p></section>
         {error && <p className="dashboard-message dashboard-error" role="alert">{error}</p>}{notice && <p className="dashboard-message dashboard-notice" role="status">{notice}</p>}
 
         {view === "discover" && <section aria-label="Discover skills">
