@@ -52,22 +52,55 @@ service cloud.firestore {
 
     // ---------- swapRequests/{requestId} ----------
     // Only the two participants (sender/receiver) can read a request.
-    // Create: sender must set fromUserId to themself and cannot target self.
-    // Update: only participants may change status; sender can cancel,
-    // receiver can accept/decline. No changing skillId/participants after creation.
+    // Senders may cancel pending requests; recipients may accept or decline.
     match /swapRequests/{requestId} {
       allow read: if isParticipant(resource.data) || isAdmin();
 
       allow create: if isSignedIn()
+                    && request.resource.data.keys().hasAll([
+                      'fromUserId', 'toUserId', 'skillId', 'offeredSkillId',
+                      'message', 'status', 'createdAt', 'updatedAt'
+                    ])
+                    && request.resource.data.keys().hasOnly([
+                      'fromUserId', 'toUserId', 'skillId', 'offeredSkillId',
+                      'message', 'status', 'createdAt', 'updatedAt'
+                    ])
                     && request.resource.data.fromUserId == request.auth.uid
+                    && request.resource.data.toUserId is string
                     && request.resource.data.toUserId != request.auth.uid
-                    && request.resource.data.status == 'pending';
+                    && request.resource.data.skillId is string
+                    && exists(/databases/$(database)/documents/skills/$(request.resource.data.skillId))
+                    && get(/databases/$(database)/documents/skills/$(request.resource.data.skillId)).data.ownerId
+                      == request.resource.data.toUserId
+                    && get(/databases/$(database)/documents/skills/$(request.resource.data.skillId)).data.status
+                      == 'active'
+                    && request.resource.data.message is string
+                    && request.resource.data.message.size() <= 500
+                    && (
+                      request.resource.data.offeredSkillId is string
+                      || request.resource.data.offeredSkillId == null
+                    )
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.createdAt is timestamp
+                    && request.resource.data.updatedAt is timestamp;
 
-      allow update: if (isParticipant(resource.data) &&
-                        request.resource.data.fromUserId == resource.data.fromUserId &&
-                        request.resource.data.toUserId == resource.data.toUserId &&
-                        request.resource.data.skillId == resource.data.skillId)
-                    || isAdmin();
+      allow update: if (
+                      isParticipant(resource.data)
+                      && resource.data.status == 'pending'
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['status', 'updatedAt'])
+                      && request.resource.data.updatedAt is timestamp
+                      && (
+                        (
+                          request.auth.uid == resource.data.toUserId
+                          && request.resource.data.status in ['accepted', 'declined']
+                        )
+                        || (
+                          request.auth.uid == resource.data.fromUserId
+                          && request.resource.data.status == 'cancelled'
+                        )
+                      )
+                    ) || isAdmin();
 
       allow delete: if isParticipant(resource.data) || isAdmin();
     }

@@ -68,6 +68,8 @@ Auto-ID document. Represents one user requesting a swap tied to a specific skill
 
 **Indexes needed:** `toUserId + status + createdAt`, `fromUserId + status + createdAt`.
 
+The dashboard creates requests from active skill listings. A request starts as `pending`; only the recipient can change it to `accepted` or `declined`, and only the sender can change it to `cancelled`. Status changes update `updatedAt`; participant IDs and the requested skill cannot be changed after creation.
+
 ---
 
 ## `reviews/{reviewId}` (optional, supports post-swap trust signals)
