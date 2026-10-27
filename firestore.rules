@@ -116,21 +116,93 @@ service cloud.firestore {
                       isParticipant(resource.data)
                       && resource.data.status == 'pending'
                       && request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['status', 'updatedAt'])
+                        .hasOnly(['status', 'updatedAt', 'offeredSkillId'])
                       && request.resource.data.updatedAt is timestamp
                       && (
                         (
                           request.auth.uid == resource.data.toUserId
                           && request.resource.data.status in ['accepted', 'declined']
+                          && (
+                            (
+                              request.resource.data.status == 'accepted'
+                              && request.resource.data.offeredSkillId is string
+                              && exists(/databases/$(database)/documents/skills/$(request.resource.data.offeredSkillId))
+                              && get(/databases/$(database)/documents/skills/$(request.resource.data.offeredSkillId)).data.ownerId
+                                == resource.data.fromUserId
+                              && get(/databases/$(database)/documents/skills/$(request.resource.data.offeredSkillId)).data.status
+                                == 'active'
+                            )
+                            || (
+                              request.resource.data.status == 'declined'
+                              && request.resource.data.offeredSkillId == resource.data.offeredSkillId
+                            )
+                          )
                         )
                         || (
                           request.auth.uid == resource.data.fromUserId
                           && request.resource.data.status == 'cancelled'
+                          && request.resource.data.offeredSkillId == resource.data.offeredSkillId
                         )
                       )
                     ) || isAdmin();
 
       allow delete: if (isActiveUser() && isParticipant(resource.data)) || isAdmin();
+    }
+
+    // ---------- notifications/{notificationId} ----------
+    // Notifications are written alongside the swap request they describe.
+    // The recipient can read, mark as read, or delete their own notifications.
+    match /notifications/{notificationId} {
+      allow read: if isActiveUser() && resource.data.recipientId == request.auth.uid;
+
+      allow create: if isActiveUser()
+                    && request.resource.data.keys().hasAll([
+                      'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                    ])
+                    && request.resource.data.keys().hasOnly([
+                      'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                    ])
+                    && request.resource.data.actorId == request.auth.uid
+                    && request.resource.data.recipientId is string
+                    && request.resource.data.requestId is string
+                    && request.resource.data.read == false
+                    && request.resource.data.createdAt is timestamp
+                    && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
+                    && (
+                      (
+                        request.resource.data.kind == 'swap_request'
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
+                          == request.auth.uid
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
+                          == request.resource.data.recipientId
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.status
+                          == 'pending'
+                      )
+                      || (
+                        request.resource.data.kind == 'swap_accepted'
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
+                          == request.auth.uid
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
+                          == request.resource.data.recipientId
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.status
+                          == 'accepted'
+                      )
+                      || (
+                        request.resource.data.kind == 'swap_declined'
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
+                          == request.auth.uid
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
+                          == request.resource.data.recipientId
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.status
+                          == 'declined'
+                      )
+                    );
+
+      allow update: if isActiveUser()
+                    && resource.data.recipientId == request.auth.uid
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+                    && request.resource.data.read == true;
+      allow delete: if isActiveUser() && resource.data.recipientId == request.auth.uid;
     }
 
     // ---------- reviews/{reviewId} ----------

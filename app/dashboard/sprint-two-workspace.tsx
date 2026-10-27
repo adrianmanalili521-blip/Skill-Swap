@@ -16,6 +16,7 @@ import {
   serverTimestamp,
   updateDoc,
   where,
+  writeBatch,
 } from "firebase/firestore";
 import { useAuth } from "@/lib/auth-context";
 import { getAuthErrorMessage } from "@/lib/auth-errors";
@@ -60,6 +61,18 @@ interface SwapRequest {
   createdAt?: { toMillis?: () => number };
 }
 
+type NotificationKind = "swap_request" | "swap_accepted" | "swap_declined";
+
+interface AppNotification {
+  id: string;
+  recipientId: string;
+  actorId: string;
+  requestId: string;
+  kind: NotificationKind;
+  read: boolean;
+  createdAt?: { toMillis?: () => number };
+}
+
 interface SwapRequestSnapshotState {
   userId: string | null;
   incoming: SwapRequest[];
@@ -83,6 +96,10 @@ function requestCreatedTime(request: SwapRequest) {
   return request.createdAt?.toMillis?.() ?? 0;
 }
 
+function notificationCreatedTime(notification: AppNotification) {
+  return notification.createdAt?.toMillis?.() ?? 0;
+}
+
 export default function SprintTwoWorkspace() {
   const { user, loading, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -98,6 +115,13 @@ export default function SprintTwoWorkspace() {
     outgoingLoaded: false,
     error: null,
   });
+  const [notificationSnapshot, setNotificationSnapshot] = useState<{
+    userId: string | null;
+    notifications: AppNotification[];
+    error: string | null;
+  }>({ userId: null, notifications: [], error: null });
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [selectedOfferSkills, setSelectedOfferSkills] = useState<Record<string, string>>({});
   const [bio, setBio] = useState("");
   const [skillsText, setSkillsText] = useState("");
   const [goalsText, setGoalsText] = useState("");
@@ -151,6 +175,29 @@ export default function SprintTwoWorkspace() {
     }
     void loadDashboard();
     return () => { active = false; };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(
+      query(collection(db, "notifications"), where("recipientId", "==", user.uid)),
+      (snapshot) => {
+        setNotificationSnapshot({
+          userId: user.uid,
+          notifications: snapshot.docs
+            .map((notificationDoc) => ({ id: notificationDoc.id, ...notificationDoc.data() }) as AppNotification)
+            .sort((first, second) => notificationCreatedTime(second) - notificationCreatedTime(first)),
+          error: null,
+        });
+      },
+      (listenerError) => {
+        setNotificationSnapshot({
+          userId: user.uid,
+          notifications: [],
+          error: `Unable to load notifications: ${getAuthErrorMessage(listenerError)}`,
+        });
+      },
+    );
   }, [user]);
 
   useEffect(() => {
@@ -276,6 +323,9 @@ export default function SprintTwoWorkspace() {
   const outgoingRequests = requestSnapshotIsCurrent ? requestSnapshot.outgoing : [];
   const loadingRequests = !requestSnapshotIsCurrent || !requestSnapshot.incomingLoaded || !requestSnapshot.outgoingLoaded;
   const requestLoadError = requestSnapshotIsCurrent ? requestSnapshot.error : null;
+  const notifications = notificationSnapshot.userId === user?.uid ? notificationSnapshot.notifications : [];
+  const notificationError = notificationSnapshot.userId === user?.uid ? notificationSnapshot.error : null;
+  const unreadNotificationCount = notifications.filter((notification) => !notification.read).length;
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -344,7 +394,10 @@ export default function SprintTwoWorkspace() {
     if (!user || sendingRequestFor) return;
     setSendingRequestFor(listing.id); setError(null); setNotice(null);
     try {
-      await addDoc(collection(db, "swapRequests"), {
+      const batch = writeBatch(db);
+      const requestRef = doc(collection(db, "swapRequests"));
+      const notificationRef = doc(collection(db, "notifications"));
+      batch.set(requestRef, {
         fromUserId: user.uid,
         toUserId: listing.ownerId,
         skillId: listing.id,
@@ -354,6 +407,15 @@ export default function SprintTwoWorkspace() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      batch.set(notificationRef, {
+        recipientId: listing.ownerId,
+        actorId: user.uid,
+        requestId: requestRef.id,
+        kind: "swap_request",
+        read: false,
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
       setRequestFormFor(null);
       setRequestMessage("");
       setNotice("Swap request sent.");
@@ -362,13 +424,64 @@ export default function SprintTwoWorkspace() {
   }
 
   async function updateSwapRequest(request: SwapRequest, status: "accepted" | "declined" | "cancelled") {
-    if (processingRequestId) return;
+    if (!user || processingRequestId) return;
+    const offeredSkillId = status === "accepted" ? selectedOfferSkills[request.id] : undefined;
+    if (status === "accepted" && !offeredSkillId) {
+      setError("Choose one of the requester's active skills before accepting.");
+      return;
+    }
     setProcessingRequestId(request.id); setError(null); setNotice(null);
     try {
-      await updateDoc(doc(db, "swapRequests", request.id), { status, updatedAt: serverTimestamp() });
+      const batch = writeBatch(db);
+      batch.update(doc(db, "swapRequests", request.id), {
+        status,
+        updatedAt: serverTimestamp(),
+        ...(status === "accepted" ? { offeredSkillId } : {}),
+      });
+      if (status === "accepted" || status === "declined") {
+        batch.set(doc(collection(db, "notifications")), {
+          recipientId: request.fromUserId,
+          actorId: user.uid,
+          requestId: request.id,
+          kind: status === "accepted" ? "swap_accepted" : "swap_declined",
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      }
+      await batch.commit();
       setNotice(status === "accepted" ? "Swap request accepted." : status === "declined" ? "Swap request declined." : "Swap request cancelled.");
     } catch (requestError) { setError(getAuthErrorMessage(requestError)); }
     finally { setProcessingRequestId(null); }
+  }
+
+  async function openNotification(notification: AppNotification) {
+    setError(null);
+    try {
+      if (!notification.read) {
+        await updateDoc(doc(db, "notifications", notification.id), { read: true });
+      }
+      setNotificationsOpen(false);
+      setView("requests");
+    } catch (readError) {
+      setError(getAuthErrorMessage(readError));
+    }
+  }
+
+  async function markAllNotificationsRead() {
+    const unreadNotifications = notifications.filter((notification) => !notification.read);
+    if (!unreadNotifications.length) return;
+    try {
+      for (let offset = 0; offset < unreadNotifications.length; offset += 500) {
+        const batch = writeBatch(db);
+        unreadNotifications.slice(offset, offset + 500).forEach((notification) => {
+          batch.update(doc(db, "notifications", notification.id), { read: true });
+        });
+        await batch.commit();
+      }
+      setNotice("Notifications marked as read.");
+    } catch (readError) {
+      setError(getAuthErrorMessage(readError));
+    }
   }
 
   async function onToggleTheme() {
@@ -394,6 +507,16 @@ export default function SprintTwoWorkspace() {
           {profile?.role === "admin" && <Link className="dashboard-nav-item admin-nav-link" href="/admin">Admin panel</Link>}
         </nav>
         <div className="dashboard-header-actions">
+          <div className="notification-control">
+            <button className="notification-toggle" type="button" aria-label={`Notifications${unreadNotificationCount ? `, ${unreadNotificationCount} unread` : ""}`} aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}>
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+              {unreadNotificationCount > 0 && <span className="notification-count">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>}
+            </button>
+            {notificationsOpen && <section className="notification-popover" aria-label="Notifications">
+              <div className="notification-popover-heading"><strong>Notifications</strong>{unreadNotificationCount > 0 && <button className="text-action" type="button" onClick={() => void markAllNotificationsRead()}>Mark all read</button>}</div>
+              {notificationError ? <p className="notification-empty" role="alert">{notificationError}</p> : notifications.length ? <ul className="notification-list">{notifications.slice(0, 20).map((notification) => <li key={notification.id}><button className={`notification-item${notification.read ? "" : " unread"}`} type="button" onClick={() => void openNotification(notification)}><span className="notification-dot" aria-hidden="true" /><span>{notification.kind === "swap_request" ? "You received a new swap request." : notification.kind === "swap_accepted" ? "Your swap request was accepted." : "Your swap request was declined."}</span></button></li>)}</ul> : <p className="notification-empty">You’re all caught up.</p>}
+            </section>}
+          </div>
           <button className="theme-toggle" type="button" onClick={onToggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}><span aria-hidden="true">{theme === "light" ? "◐" : "☀"}</span></button>
           <span className="dashboard-user-email">{user.email}</span>
           <button className="dashboard-signout" type="button" onClick={onSignOut} disabled={signingOut}>{signingOut ? "Signing out..." : "Sign out"}</button>
@@ -418,10 +541,13 @@ export default function SprintTwoWorkspace() {
         {view === "requests" && <section className="swap-requests-view" aria-label="Swap requests">
           {loadingRequests ? <div className="empty-state">Loading swap requests...</div> : requestLoadError ? <div className="empty-state" role="alert"><strong>Requests are unavailable.</strong><span>{requestLoadError}</span></div> : <>
             <section className="request-group" aria-labelledby="incoming-requests-heading"><div className="results-heading"><h2 id="incoming-requests-heading">Received</h2><span>{incomingRequests.length} {incomingRequests.length === 1 ? "request" : "requests"}</span></div>
-              {incomingRequests.length ? <div className="request-list">{incomingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST RECEIVED</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">From a <Link href={`/profile/${request.fromUserId}`}>community member</Link></p>{request.message && <p className="request-message">{request.message}</p>}{request.status === "pending" && <div className="request-actions"><button className="secondary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "declined")}>Decline</button><button className="primary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "accepted")}>{processingRequestId === request.id ? "Saving..." : "Accept"}</button></div>}</article>)}</div> : <div className="empty-state"><strong>No requests received.</strong><span>When someone requests one of your skills, it will appear here.</span></div>}
+              {incomingRequests.length ? <div className="request-list">{incomingRequests.map((request) => {
+                const requesterSkills = listings.filter((listing) => listing.ownerId === request.fromUserId && listing.status === "active");
+                return <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST RECEIVED</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">From a <Link href={`/profile/${request.fromUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{request.status === "pending" && <><label className="dashboard-field request-offer-field"><span>Choose a skill from the requester</span><select value={selectedOfferSkills[request.id] ?? ""} onChange={(event) => setSelectedOfferSkills((current) => ({ ...current, [request.id]: event.target.value }))} required><option value="">Select an active skill</option>{requesterSkills.map((skill) => <option key={skill.id} value={skill.id}>{skill.title}</option>)}</select></label><div className="request-actions"><button className="secondary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "declined")}>Decline</button><button className="primary-action" type="button" disabled={processingRequestId !== null || requesterSkills.length === 0 || !selectedOfferSkills[request.id]} onClick={() => void updateSwapRequest(request, "accepted")}>{processingRequestId === request.id ? "Saving..." : "Accept"}</button></div>{requesterSkills.length === 0 && <p className="request-existing-status">The requester has no active skill listings to select, so this request cannot be accepted.</p>}</>}</article>;
+              })}</div> : <div className="empty-state"><strong>No requests received.</strong><span>When someone requests one of your skills, it will appear here.</span></div>}
             </section>
             <section className="request-group" aria-labelledby="outgoing-requests-heading"><div className="results-heading"><h2 id="outgoing-requests-heading">Sent</h2><span>{outgoingRequests.length} {outgoingRequests.length === 1 ? "request" : "requests"}</span></div>
-              {outgoingRequests.length ? <div className="request-list">{outgoingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST SENT</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>{request.message && <p className="request-message">{request.message}</p>}{request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}</article>)}</div> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
+              {outgoingRequests.length ? <div className="request-list">{outgoingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST SENT</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}</article>)}</div> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
             </section>
           </>}
         </section>}
