@@ -54,6 +54,7 @@ async function ensureUserDoc(user: User) {
     skillsOffered: [],
     learningGoals: [],
     role: "user",
+    status: "active",
     rating: 0,
     ratingCount: 0,
     theme: "light",

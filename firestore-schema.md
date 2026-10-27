@@ -24,6 +24,7 @@ Document ID = Firebase Auth `uid` (keeps 1:1 lookup trivial, no extra query need
 | `skillsOffered` | array\<string\> | denormalized skill titles/IDs for quick profile display |
 | `learningGoals` | array\<string\> | skills the user wants to learn |
 | `role` | `"user"` \| `"admin"` | default `"user"`; only settable by admin via rules |
+| `status` | `"active"` \| `"suspended"` | defaults to `"active"`; only admins can suspend or reactivate users |
 | `rating` | number | running average, updated via Cloud Function on new review (Sprint 3+) |
 | `ratingCount` | number | |
 | `theme` | `"light"` \| `"dark"` | optional, persists MS2 theme toggle per-user |
@@ -49,6 +50,8 @@ Auto-ID document. One doc per skill listing a user offers.
 | `updatedAt` | timestamp | |
 
 **Indexes needed:** `category + createdAt`, `status + createdAt` (see `firestore.indexes.json`).
+
+Admins can pause, remove, and restore skill listings from `/admin`. Removed listings are soft-moderated by changing `status` to `"removed"`; their documents are retained.
 
 ---
 
