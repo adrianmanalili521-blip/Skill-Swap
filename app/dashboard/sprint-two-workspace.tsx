@@ -10,6 +10,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   orderBy,
   query,
   serverTimestamp,
@@ -21,8 +22,9 @@ import { getAuthErrorMessage } from "@/lib/auth-errors";
 import { db } from "@/lib/firebase";
 import { useTheme } from "@/lib/theme-context";
 
-type View = "discover" | "listings" | "profile";
+type View = "discover" | "listings" | "requests" | "profile";
 type SkillLevel = "beginner" | "intermediate" | "advanced";
+type SwapRequestStatus = "pending" | "accepted" | "declined" | "cancelled" | "completed";
 
 interface UserProfile {
   displayName?: string;
@@ -47,6 +49,17 @@ interface SkillListing {
   createdAt?: { toMillis?: () => number };
 }
 
+interface SwapRequest {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  skillId: string;
+  offeredSkillId: string | null;
+  message: string;
+  status: SwapRequestStatus;
+  createdAt?: { toMillis?: () => number };
+}
+
 const categories = ["Art & Design", "Business", "Cooking", "Crafts", "Language", "Music", "Technology", "Wellness", "Other"];
 
 function parseList(value: string) {
@@ -57,6 +70,10 @@ function createdTime(listing: SkillListing) {
   return listing.createdAt?.toMillis?.() ?? 0;
 }
 
+function requestCreatedTime(request: SwapRequest) {
+  return request.createdAt?.toMillis?.() ?? 0;
+}
+
 export default function SprintTwoWorkspace() {
   const { user, loading, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -64,6 +81,7 @@ export default function SprintTwoWorkspace() {
   const [view, setView] = useState<View>("discover");
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [listings, setListings] = useState<SkillListing[]>([]);
+  const [swapRequests, setSwapRequests] = useState<SwapRequest[]>([]);
   const [bio, setBio] = useState("");
   const [skillsText, setSkillsText] = useState("");
   const [goalsText, setGoalsText] = useState("");
@@ -71,8 +89,12 @@ export default function SprintTwoWorkspace() {
   const [category, setCategory] = useState("All categories");
   const [editing, setEditing] = useState<SkillListing | null>(null);
   const [showEditor, setShowEditor] = useState(false);
+  const [requestFormFor, setRequestFormFor] = useState<string | null>(null);
+  const [requestMessage, setRequestMessage] = useState("");
   const [loadingData, setLoadingData] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [sendingRequestFor, setSendingRequestFor] = useState<string | null>(null);
+  const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -89,22 +111,32 @@ export default function SprintTwoWorkspace() {
       setLoadingData(true);
       setError(null);
       try {
-        const [profileSnapshot, activeSkillsSnapshot, ownSkillsSnapshot] = await Promise.all([
+        const [profileSnapshot, activeSkillsSnapshot, ownSkillsSnapshot, incomingRequestsSnapshot, outgoingRequestsSnapshot] = await Promise.all([
           getDoc(doc(db, "users", currentUser.uid)),
           getDocs(query(collection(db, "skills"), where("status", "==", "active"), orderBy("createdAt", "desc"))),
           getDocs(query(collection(db, "skills"), where("ownerId", "==", currentUser.uid))),
+          getDocs(query(collection(db, "swapRequests"), where("toUserId", "==", currentUser.uid))),
+          getDocs(query(collection(db, "swapRequests"), where("fromUserId", "==", currentUser.uid))),
         ]);
         if (!profileSnapshot.exists()) throw new Error("Your profile is missing. Sign out and sign in again.");
         const nextProfile = profileSnapshot.data() as UserProfile;
         const skillDocs = new Map(activeSkillsSnapshot.docs.map((skillDoc) => [skillDoc.id, skillDoc]));
         ownSkillsSnapshot.docs.forEach((skillDoc) => skillDocs.set(skillDoc.id, skillDoc));
         const nextListings = [...skillDocs.values()].map((skillDoc) => ({ id: skillDoc.id, ...skillDoc.data() }) as SkillListing);
+        const requestDocs = new Map([
+          ...incomingRequestsSnapshot.docs.map((requestDoc) => [requestDoc.id, requestDoc] as const),
+          ...outgoingRequestsSnapshot.docs.map((requestDoc) => [requestDoc.id, requestDoc] as const),
+        ]);
+        const nextRequests = [...requestDocs.values()]
+          .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }) as SwapRequest)
+          .sort((first, second) => requestCreatedTime(second) - requestCreatedTime(first));
         if (!active) return;
         setProfile(nextProfile);
         setBio(nextProfile.bio ?? "");
         setSkillsText((nextProfile.skillsOffered ?? []).join(", "));
         setGoalsText((nextProfile.learningGoals ?? []).join(", "));
         setListings(nextListings.sort((first, second) => createdTime(second) - createdTime(first)));
+        setSwapRequests(nextRequests);
       } catch (loadError) {
         if (active) setError(getAuthErrorMessage(loadError));
       } finally {
@@ -113,6 +145,114 @@ export default function SprintTwoWorkspace() {
     }
     void loadDashboard();
     return () => { active = false; };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const currentUserId = user.uid;
+    let active = true;
+    let incomingLoaded = false;
+    let outgoingLoaded = false;
+
+    function finishInitialLoad() {
+      if (incomingLoaded && outgoingLoaded && active) {
+        setRequestSnapshot((current) => current.userId === currentUserId
+          ? { ...current, incomingLoaded: true, outgoingLoaded: true }
+          : {
+              userId: currentUserId,
+              incoming: [],
+              outgoing: [],
+              incomingLoaded: true,
+              outgoingLoaded: true,
+              error: null,
+            });
+      }
+    }
+
+    const incomingUnsubscribe = onSnapshot(
+      query(collection(db, "swapRequests"), where("toUserId", "==", currentUserId)),
+      (snapshot) => {
+        if (!active) return;
+        const requests = snapshot.docs
+          .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }) as SwapRequest)
+          .sort((first, second) => requestCreatedTime(second) - requestCreatedTime(first));
+        setRequestSnapshot((current) => {
+          const previous = current.userId === currentUserId ? current : {
+            userId: currentUserId,
+            incoming: [],
+            outgoing: [],
+            incomingLoaded: false,
+            outgoingLoaded: false,
+            error: null,
+          };
+          return { ...previous, incoming: requests, incomingLoaded: true };
+        });
+        incomingLoaded = true;
+        finishInitialLoad();
+      },
+      (listenerError) => {
+        if (!active) return;
+        const message = `Unable to load received swap requests: ${getAuthErrorMessage(listenerError)}`;
+        setRequestSnapshot((current) => {
+          const previous = current.userId === currentUserId ? current : {
+            userId: currentUserId,
+            incoming: [],
+            outgoing: [],
+            incomingLoaded: false,
+            outgoingLoaded: false,
+            error: null,
+          };
+          return { ...previous, incomingLoaded: true, error: previous.error ?? message };
+        });
+        incomingLoaded = true;
+        finishInitialLoad();
+      },
+    );
+    const outgoingUnsubscribe = onSnapshot(
+      query(collection(db, "swapRequests"), where("fromUserId", "==", currentUserId)),
+      (snapshot) => {
+        if (!active) return;
+        const requests = snapshot.docs
+          .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }) as SwapRequest)
+          .sort((first, second) => requestCreatedTime(second) - requestCreatedTime(first));
+        setRequestSnapshot((current) => {
+          const previous = current.userId === currentUserId ? current : {
+            userId: currentUserId,
+            incoming: [],
+            outgoing: [],
+            incomingLoaded: false,
+            outgoingLoaded: false,
+            error: null,
+          };
+          return { ...previous, outgoing: requests, outgoingLoaded: true };
+        });
+        outgoingLoaded = true;
+        finishInitialLoad();
+      },
+      (listenerError) => {
+        if (!active) return;
+        const message = `Unable to load sent swap requests: ${getAuthErrorMessage(listenerError)}`;
+        setRequestSnapshot((current) => {
+          const previous = current.userId === currentUserId ? current : {
+            userId: currentUserId,
+            incoming: [],
+            outgoing: [],
+            incomingLoaded: false,
+            outgoingLoaded: false,
+            error: null,
+          };
+          return { ...previous, outgoingLoaded: true, error: previous.error ?? message };
+        });
+        outgoingLoaded = true;
+        finishInitialLoad();
+      },
+    );
+
+    return () => {
+      active = false;
+      incomingUnsubscribe();
+      outgoingUnsubscribe();
+    };
   }, [user]);
 
   const myListings = listings.filter((listing) => listing.ownerId === user?.uid && listing.status !== "removed");
@@ -125,6 +265,8 @@ export default function SprintTwoWorkspace() {
         .some((text) => text?.toLowerCase().includes(term));
     });
   }, [category, listings, search, user?.uid]);
+  const incomingRequests = swapRequests.filter((request) => request.toUserId === user?.uid);
+  const outgoingRequests = swapRequests.filter((request) => request.fromUserId === user?.uid);
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -188,6 +330,48 @@ export default function SprintTwoWorkspace() {
     } catch (deleteError) { setError(getAuthErrorMessage(deleteError)); }
   }
 
+  async function sendSwapRequest(listing: SkillListing, event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user || sendingRequestFor) return;
+    setSendingRequestFor(listing.id); setError(null); setNotice(null);
+    try {
+      const created = await addDoc(collection(db, "swapRequests"), {
+        fromUserId: user.uid,
+        toUserId: listing.ownerId,
+        skillId: listing.id,
+        offeredSkillId: null,
+        message: requestMessage.trim(),
+        status: "pending",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      setSwapRequests((current) => [{
+        id: created.id,
+        fromUserId: user.uid,
+        toUserId: listing.ownerId,
+        skillId: listing.id,
+        offeredSkillId: null,
+        message: requestMessage.trim(),
+        status: "pending",
+      }, ...current]);
+      setRequestFormFor(null);
+      setRequestMessage("");
+      setNotice("Swap request sent.");
+    } catch (requestError) { setError(getAuthErrorMessage(requestError)); }
+    finally { setSendingRequestFor(null); }
+  }
+
+  async function updateSwapRequest(request: SwapRequest, status: "accepted" | "declined" | "cancelled") {
+    if (processingRequestId) return;
+    setProcessingRequestId(request.id); setError(null); setNotice(null);
+    try {
+      await updateDoc(doc(db, "swapRequests", request.id), { status, updatedAt: serverTimestamp() });
+      setSwapRequests((current) => current.map((item) => item.id === request.id ? { ...item, status } : item));
+      setNotice(status === "accepted" ? "Swap request accepted." : status === "declined" ? "Swap request declined." : "Swap request cancelled.");
+    } catch (requestError) { setError(getAuthErrorMessage(requestError)); }
+    finally { setProcessingRequestId(null); }
+  }
+
   async function onToggleTheme() {
     try { await toggleTheme(); setNotice("Theme preference saved."); }
     catch { setNotice("Theme changed on this device. Account sync was unavailable."); }
@@ -207,8 +391,7 @@ export default function SprintTwoWorkspace() {
       <header className="dashboard-header">
         <Link className="dashboard-brand" href="/dashboard"><span className="dashboard-brand-mark" aria-hidden="true">s</span><span>skill swap</span></Link>
         <nav className="dashboard-nav" aria-label="Main navigation">
-          {(["discover", "listings", "profile"] as const).map((item) => <button key={item} className={view === item ? "dashboard-nav-item active" : "dashboard-nav-item"} type="button" onClick={() => { setView(item); setNotice(null); }}>{item === "listings" ? "My listings" : item === "discover" ? "Discover" : "Profile"}</button>)}
-          {profile?.role === "admin" && <Link className="dashboard-nav-item admin-nav-link" href="/admin">Admin panel</Link>}
+          {(["discover", "listings", "requests", "profile"] as const).map((item) => <button key={item} className={view === item ? "dashboard-nav-item active" : "dashboard-nav-item"} type="button" onClick={() => { setView(item); setNotice(null); }}>{item === "listings" ? "My listings" : item === "requests" ? "Swap requests" : item === "discover" ? "Discover" : "Profile"}</button>)}
         </nav>
         <div className="dashboard-header-actions">
           <button className="theme-toggle" type="button" onClick={onToggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}><span aria-hidden="true">{theme === "light" ? "◐" : "☀"}</span></button>
@@ -217,13 +400,30 @@ export default function SprintTwoWorkspace() {
         </div>
       </header>
       <div className="dashboard-main">
-        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? "Find your next exchange." : view === "listings" ? "Share what you know." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : "A good exchange starts with a little context about you."}</p></section>
+        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? "Find your next exchange." : view === "listings" ? "Share what you know." : view === "requests" ? "Make an exchange happen." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : view === "requests" ? "Track the requests you send and the offers you receive." : "A good exchange starts with a little context about you."}</p></section>
         {error && <p className="dashboard-message dashboard-error" role="alert">{error}</p>}{notice && <p className="dashboard-message dashboard-notice" role="status">{notice}</p>}
 
         {view === "discover" && <section aria-label="Discover skills">
           <div className="discover-tools"><label className="search-field"><span className="search-icon" aria-hidden="true">⌕</span><span className="visually-hidden">Search skills, tags, or people</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search skills, tags, or people" /></label><label className="category-filter"><span className="visually-hidden">Filter by category</span><select value={category} onChange={(event) => setCategory(event.target.value)}><option>All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); setView("listings"); }}><span aria-hidden="true">＋</span> Offer a skill</button></div>
           <div className="results-heading"><h2>Community skills</h2><span>{loadingData ? "Loading..." : `${discoveredListings.length} ${discoveredListings.length === 1 ? "listing" : "listings"}`}</span></div>
-          {loadingData ? <div className="empty-state">Loading skills...</div> : discoveredListings.length ? <div className="skill-grid">{discoveredListings.map((listing, index) => <article className="skill-card" key={listing.id} style={{ animationDelay: `${Math.min(index * 45, 270)}ms` }}><div className="skill-card-topline"><span className="skill-category">{listing.category}</span><span className="skill-level">{listing.level}</span></div><h3>{listing.title}</h3><p className="skill-description">{listing.description || "This member is happy to share what they know."}</p>{listing.tags.length > 0 && <div className="skill-tags">{listing.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="skill-card-footer"><Link href={`/profile/${listing.ownerId}`} className="listing-owner"><span className="mini-avatar">{listing.ownerName.slice(0, 1).toUpperCase()}</span><span>{listing.ownerName}</span></Link><span className="listing-status">Open to swap</span></div></article>)}</div> : <div className="empty-state"><strong>No matching skills yet.</strong><span>Try another search, or be the first to share a skill.</span></div>}
+          {loadingData ? <div className="empty-state">Loading skills...</div> : discoveredListings.length ? <div className="skill-grid">{discoveredListings.map((listing, index) => {
+            const previousRequest = outgoingRequests.find((request) => request.skillId === listing.id && (request.status === "pending" || request.status === "accepted"));
+            const requestFormOpen = requestFormFor === listing.id;
+            return <article className="skill-card" key={listing.id} style={{ animationDelay: `${Math.min(index * 45, 270)}ms` }}><div className="skill-card-topline"><span className="skill-category">{listing.category}</span><span className="skill-level">{listing.level}</span></div><h3>{listing.title}</h3><p className="skill-description">{listing.description || "This member is happy to share what they know."}</p>{listing.tags.length > 0 && <div className="skill-tags">{listing.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="skill-card-footer"><Link href={`/profile/${listing.ownerId}`} className="listing-owner"><span className="mini-avatar">{listing.ownerName.slice(0, 1).toUpperCase()}</span><span>{listing.ownerName}</span></Link><span className="listing-status">Open to swap</span></div>
+              {previousRequest ? <p className="request-existing-status">Request {previousRequest.status}</p> : requestFormOpen ? <form className="swap-request-form" onSubmit={(event) => void sendSwapRequest(listing, event)}><label className="dashboard-field"><span>Message <small>Optional</small></span><textarea value={requestMessage} onChange={(event) => setRequestMessage(event.target.value)} maxLength={500} rows={3} placeholder="What would you like to learn?" /></label><div className="editor-actions"><button className="secondary-action" type="button" onClick={() => { setRequestFormFor(null); setRequestMessage(""); }}>Cancel</button><button className="primary-action" type="submit" disabled={sendingRequestFor !== null}>{sendingRequestFor === listing.id ? "Sending..." : "Send request"}</button></div></form> : <button className="secondary-action request-start" type="button" onClick={() => { setRequestFormFor(listing.id); setRequestMessage(""); }}>Request a swap</button>}
+            </article>;
+          })}</div> : <div className="empty-state"><strong>No matching skills yet.</strong><span>Try another search, or be the first to share a skill.</span></div>}
+        </section>}
+
+        {view === "requests" && <section className="swap-requests-view" aria-label="Swap requests">
+          {loadingData ? <div className="empty-state">Loading swap requests...</div> : <>
+            <section className="request-group" aria-labelledby="incoming-requests-heading"><div className="results-heading"><h2 id="incoming-requests-heading">Received</h2><span>{incomingRequests.length} {incomingRequests.length === 1 ? "request" : "requests"}</span></div>
+              {incomingRequests.length ? <div className="request-list">{incomingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST RECEIVED</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">From a <Link href={`/profile/${request.fromUserId}`}>community member</Link></p>{request.message && <p className="request-message">{request.message}</p>}{request.status === "pending" && <div className="request-actions"><button className="secondary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "declined")}>Decline</button><button className="primary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "accepted")}>{processingRequestId === request.id ? "Saving..." : "Accept"}</button></div>}</article>)}</div> : <div className="empty-state"><strong>No requests received.</strong><span>When someone requests one of your skills, it will appear here.</span></div>}
+            </section>
+            <section className="request-group" aria-labelledby="outgoing-requests-heading"><div className="results-heading"><h2 id="outgoing-requests-heading">Sent</h2><span>{outgoingRequests.length} {outgoingRequests.length === 1 ? "request" : "requests"}</span></div>
+              {outgoingRequests.length ? <div className="request-list">{outgoingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST SENT</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>{request.message && <p className="request-message">{request.message}</p>}{request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}</article>)}</div> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
+            </section>
+          </>}
         </section>}
 
         {view === "listings" && <section aria-label="Manage your skill listings"><div className="section-toolbar"><div><h2>Your listings</h2><p>{myListings.length} total · {myListings.filter((item) => item.status === "active").length} active</p></div>{!showEditor && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); }}>＋ New listing</button>}</div>
