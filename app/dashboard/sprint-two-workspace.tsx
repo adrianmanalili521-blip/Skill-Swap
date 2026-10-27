@@ -60,6 +60,15 @@ interface SwapRequest {
   createdAt?: { toMillis?: () => number };
 }
 
+interface SwapRequestSnapshotState {
+  userId: string | null;
+  incoming: SwapRequest[];
+  outgoing: SwapRequest[];
+  incomingLoaded: boolean;
+  outgoingLoaded: boolean;
+  error: string | null;
+}
+
 const categories = ["Art & Design", "Business", "Cooking", "Crafts", "Language", "Music", "Technology", "Wellness", "Other"];
 
 function parseList(value: string) {
@@ -81,7 +90,14 @@ export default function SprintTwoWorkspace() {
   const [view, setView] = useState<View>("discover");
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [listings, setListings] = useState<SkillListing[]>([]);
-  const [swapRequests, setSwapRequests] = useState<SwapRequest[]>([]);
+  const [requestSnapshot, setRequestSnapshot] = useState<SwapRequestSnapshotState>({
+    userId: null,
+    incoming: [],
+    outgoing: [],
+    incomingLoaded: false,
+    outgoingLoaded: false,
+    error: null,
+  });
   const [bio, setBio] = useState("");
   const [skillsText, setSkillsText] = useState("");
   const [goalsText, setGoalsText] = useState("");
@@ -111,32 +127,22 @@ export default function SprintTwoWorkspace() {
       setLoadingData(true);
       setError(null);
       try {
-        const [profileSnapshot, activeSkillsSnapshot, ownSkillsSnapshot, incomingRequestsSnapshot, outgoingRequestsSnapshot] = await Promise.all([
+        const [profileSnapshot, activeSkillsSnapshot, ownSkillsSnapshot] = await Promise.all([
           getDoc(doc(db, "users", currentUser.uid)),
           getDocs(query(collection(db, "skills"), where("status", "==", "active"), orderBy("createdAt", "desc"))),
           getDocs(query(collection(db, "skills"), where("ownerId", "==", currentUser.uid))),
-          getDocs(query(collection(db, "swapRequests"), where("toUserId", "==", currentUser.uid))),
-          getDocs(query(collection(db, "swapRequests"), where("fromUserId", "==", currentUser.uid))),
         ]);
         if (!profileSnapshot.exists()) throw new Error("Your profile is missing. Sign out and sign in again.");
         const nextProfile = profileSnapshot.data() as UserProfile;
         const skillDocs = new Map(activeSkillsSnapshot.docs.map((skillDoc) => [skillDoc.id, skillDoc]));
         ownSkillsSnapshot.docs.forEach((skillDoc) => skillDocs.set(skillDoc.id, skillDoc));
         const nextListings = [...skillDocs.values()].map((skillDoc) => ({ id: skillDoc.id, ...skillDoc.data() }) as SkillListing);
-        const requestDocs = new Map([
-          ...incomingRequestsSnapshot.docs.map((requestDoc) => [requestDoc.id, requestDoc] as const),
-          ...outgoingRequestsSnapshot.docs.map((requestDoc) => [requestDoc.id, requestDoc] as const),
-        ]);
-        const nextRequests = [...requestDocs.values()]
-          .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }) as SwapRequest)
-          .sort((first, second) => requestCreatedTime(second) - requestCreatedTime(first));
         if (!active) return;
         setProfile(nextProfile);
         setBio(nextProfile.bio ?? "");
         setSkillsText((nextProfile.skillsOffered ?? []).join(", "));
         setGoalsText((nextProfile.learningGoals ?? []).join(", "));
         setListings(nextListings.sort((first, second) => createdTime(second) - createdTime(first)));
-        setSwapRequests(nextRequests);
       } catch (loadError) {
         if (active) setError(getAuthErrorMessage(loadError));
       } finally {
@@ -265,8 +271,11 @@ export default function SprintTwoWorkspace() {
         .some((text) => text?.toLowerCase().includes(term));
     });
   }, [category, listings, search, user?.uid]);
-  const incomingRequests = swapRequests.filter((request) => request.toUserId === user?.uid);
-  const outgoingRequests = swapRequests.filter((request) => request.fromUserId === user?.uid);
+  const requestSnapshotIsCurrent = requestSnapshot.userId === user?.uid;
+  const incomingRequests = requestSnapshotIsCurrent ? requestSnapshot.incoming : [];
+  const outgoingRequests = requestSnapshotIsCurrent ? requestSnapshot.outgoing : [];
+  const loadingRequests = !requestSnapshotIsCurrent || !requestSnapshot.incomingLoaded || !requestSnapshot.outgoingLoaded;
+  const requestLoadError = requestSnapshotIsCurrent ? requestSnapshot.error : null;
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -335,7 +344,7 @@ export default function SprintTwoWorkspace() {
     if (!user || sendingRequestFor) return;
     setSendingRequestFor(listing.id); setError(null); setNotice(null);
     try {
-      const created = await addDoc(collection(db, "swapRequests"), {
+      await addDoc(collection(db, "swapRequests"), {
         fromUserId: user.uid,
         toUserId: listing.ownerId,
         skillId: listing.id,
@@ -345,15 +354,6 @@ export default function SprintTwoWorkspace() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      setSwapRequests((current) => [{
-        id: created.id,
-        fromUserId: user.uid,
-        toUserId: listing.ownerId,
-        skillId: listing.id,
-        offeredSkillId: null,
-        message: requestMessage.trim(),
-        status: "pending",
-      }, ...current]);
       setRequestFormFor(null);
       setRequestMessage("");
       setNotice("Swap request sent.");
@@ -366,7 +366,6 @@ export default function SprintTwoWorkspace() {
     setProcessingRequestId(request.id); setError(null); setNotice(null);
     try {
       await updateDoc(doc(db, "swapRequests", request.id), { status, updatedAt: serverTimestamp() });
-      setSwapRequests((current) => current.map((item) => item.id === request.id ? { ...item, status } : item));
       setNotice(status === "accepted" ? "Swap request accepted." : status === "declined" ? "Swap request declined." : "Swap request cancelled.");
     } catch (requestError) { setError(getAuthErrorMessage(requestError)); }
     finally { setProcessingRequestId(null); }
@@ -411,13 +410,13 @@ export default function SprintTwoWorkspace() {
             const previousRequest = outgoingRequests.find((request) => request.skillId === listing.id && (request.status === "pending" || request.status === "accepted"));
             const requestFormOpen = requestFormFor === listing.id;
             return <article className="skill-card" key={listing.id} style={{ animationDelay: `${Math.min(index * 45, 270)}ms` }}><div className="skill-card-topline"><span className="skill-category">{listing.category}</span><span className="skill-level">{listing.level}</span></div><h3>{listing.title}</h3><p className="skill-description">{listing.description || "This member is happy to share what they know."}</p>{listing.tags.length > 0 && <div className="skill-tags">{listing.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="skill-card-footer"><Link href={`/profile/${listing.ownerId}`} className="listing-owner"><span className="mini-avatar">{listing.ownerName.slice(0, 1).toUpperCase()}</span><span>{listing.ownerName}</span></Link><span className="listing-status">Open to swap</span></div>
-              {previousRequest ? <p className="request-existing-status">Request {previousRequest.status}</p> : requestFormOpen ? <form className="swap-request-form" onSubmit={(event) => void sendSwapRequest(listing, event)}><label className="dashboard-field"><span>Message <small>Optional</small></span><textarea value={requestMessage} onChange={(event) => setRequestMessage(event.target.value)} maxLength={500} rows={3} placeholder="What would you like to learn?" /></label><div className="editor-actions"><button className="secondary-action" type="button" onClick={() => { setRequestFormFor(null); setRequestMessage(""); }}>Cancel</button><button className="primary-action" type="submit" disabled={sendingRequestFor !== null}>{sendingRequestFor === listing.id ? "Sending..." : "Send request"}</button></div></form> : <button className="secondary-action request-start" type="button" onClick={() => { setRequestFormFor(listing.id); setRequestMessage(""); }}>Request a swap</button>}
+              {previousRequest ? <p className="request-existing-status">Request {previousRequest.status}</p> : requestFormOpen ? <form className="swap-request-form" onSubmit={(event) => void sendSwapRequest(listing, event)}><label className="dashboard-field"><span>Message <small>Optional</small></span><textarea value={requestMessage} onChange={(event) => setRequestMessage(event.target.value)} maxLength={500} rows={3} placeholder="What would you like to learn?" /></label><div className="editor-actions"><button className="secondary-action" type="button" onClick={() => { setRequestFormFor(null); setRequestMessage(""); }}>Cancel</button><button className="primary-action" type="submit" disabled={sendingRequestFor !== null}>{sendingRequestFor === listing.id ? "Sending..." : "Send request"}</button></div></form> : <button className="secondary-action request-start" type="button" disabled={loadingRequests} onClick={() => { setRequestFormFor(listing.id); setRequestMessage(""); }}>{loadingRequests ? "Loading requests..." : outgoingRequests.some((request) => request.skillId === listing.id && request.status === "declined") ? "Request again" : "Request a swap"}</button>}
             </article>;
           })}</div> : <div className="empty-state"><strong>No matching skills yet.</strong><span>Try another search, or be the first to share a skill.</span></div>}
         </section>}
 
         {view === "requests" && <section className="swap-requests-view" aria-label="Swap requests">
-          {loadingData ? <div className="empty-state">Loading swap requests...</div> : <>
+          {loadingRequests ? <div className="empty-state">Loading swap requests...</div> : requestLoadError ? <div className="empty-state" role="alert"><strong>Requests are unavailable.</strong><span>{requestLoadError}</span></div> : <>
             <section className="request-group" aria-labelledby="incoming-requests-heading"><div className="results-heading"><h2 id="incoming-requests-heading">Received</h2><span>{incomingRequests.length} {incomingRequests.length === 1 ? "request" : "requests"}</span></div>
               {incomingRequests.length ? <div className="request-list">{incomingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST RECEIVED</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">From a <Link href={`/profile/${request.fromUserId}`}>community member</Link></p>{request.message && <p className="request-message">{request.message}</p>}{request.status === "pending" && <div className="request-actions"><button className="secondary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "declined")}>Decline</button><button className="primary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "accepted")}>{processingRequestId === request.id ? "Saving..." : "Accept"}</button></div>}</article>)}</div> : <div className="empty-state"><strong>No requests received.</strong><span>When someone requests one of your skills, it will appear here.</span></div>}
             </section>
