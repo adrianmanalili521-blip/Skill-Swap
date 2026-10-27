@@ -29,6 +29,7 @@ type SwapRequestStatus = "pending" | "accepted" | "declined" | "cancelled" | "co
 interface UserProfile {
   displayName?: string;
   bio?: string;
+  role?: string;
   skillsOffered?: string[];
   learningGoals?: string[];
   rating?: number;

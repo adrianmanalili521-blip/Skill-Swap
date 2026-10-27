@@ -14,7 +14,15 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', 'active') == 'active';
+    }
+
+    function isActiveUser() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', 'active') == 'active';
     }
 
     function isParticipant(data) {
@@ -23,38 +31,58 @@ service cloud.firestore {
     }
 
     // ---------- users/{userId} ----------
-    // Public profile info is readable by any signed-in user (needed for
+    // Profile info is readable by active signed-in users (needed for
     // browsing skills/listings and seeing who posted them).
-    // Only the owner (or an admin) can create/update/delete their own doc.
+    // Only the owner or an admin can create/update a profile; only admins can delete.
     match /users/{userId} {
-      allow read: if isSignedIn();
+      allow read: if isActiveUser() || isOwner(userId);
       allow create: if isOwner(userId)
                     && request.resource.data.uid == userId
-                    && request.resource.data.role == 'user'; // clients can never self-assign admin
-      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role)
-                    || isAdmin();
-      allow delete: if isOwner(userId) || isAdmin();
+                    && request.resource.data.role == 'user'
+                    && request.resource.data.get('status', 'active') == 'active'; // clients can never self-assign admin or status
+      allow update: if (
+                      isOwner(userId)
+                      && isActiveUser()
+                      && request.resource.data.role == resource.data.role
+                      && request.resource.data.get('status', 'active') == resource.data.get('status', 'active')
+                    ) || (
+                      isAdmin()
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+                      && request.resource.data.status in ['active', 'suspended']
+                      && request.resource.data.updatedAt is timestamp
+                      && (
+                        request.resource.data.status == 'active'
+                        || (resource.data.role != 'admin' && userId != request.auth.uid)
+                      )
+                    );
+      allow delete: if isAdmin();
     }
 
     // ---------- skills/{skillId} ----------
-    // Skill listings are public read (discovery feed / search).
+    // Active signed-in users can browse skill listings and discovery results.
     // Only the owner can create/edit/delete their own listing; admins can
     // moderate (e.g. take down inappropriate content) via update/delete.
     match /skills/{skillId} {
-      allow read: if true;
-      allow create: if isSignedIn()
+      allow read: if isActiveUser();
+      allow create: if isActiveUser()
                     && request.resource.data.ownerId == request.auth.uid;
       allow update: if (isOwner(resource.data.ownerId)
+               && isActiveUser()
                && request.resource.data.ownerId == resource.data.ownerId)
-            || isAdmin();
-      allow delete: if isOwner(resource.data.ownerId) || isAdmin();
+            || (
+              isAdmin()
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+              && request.resource.data.status in ['active', 'paused', 'removed']
+              && request.resource.data.updatedAt is timestamp
+            );
+      allow delete: if (isOwner(resource.data.ownerId) && isActiveUser()) || isAdmin();
     }
 
     // ---------- swapRequests/{requestId} ----------
     // Only the two participants (sender/receiver) can read a request.
     // Senders may cancel pending requests; recipients may accept or decline.
     match /swapRequests/{requestId} {
-      allow read: if isParticipant(resource.data) || isAdmin();
+      allow read: if (isActiveUser() && isParticipant(resource.data) || isAdmin());
 
       allow create: if isSignedIn()
                     && request.resource.data.keys().hasAll([
@@ -102,18 +130,18 @@ service cloud.firestore {
                       )
                     ) || isAdmin();
 
-      allow delete: if isParticipant(resource.data) || isAdmin();
+      allow delete: if (isActiveUser() && isParticipant(resource.data)) || isAdmin();
     }
 
     // ---------- reviews/{reviewId} ----------
     // Optional: left after a completed swap. Public read, only the author
     // can create, no edits after posting (simplest anti-abuse rule).
     match /reviews/{reviewId} {
-      allow read: if true;
-      allow create: if isSignedIn()
+      allow read: if isActiveUser();
+      allow create: if isActiveUser()
                     && request.resource.data.authorId == request.auth.uid;
       allow update: if false;
-      allow delete: if isOwner(resource.data.authorId) || isAdmin();
+      allow delete: if (isOwner(resource.data.authorId) && isActiveUser()) || isAdmin();
     }
 
     // Deny everything else by default.
