@@ -392,6 +392,7 @@ export default function SprintTwoWorkspace() {
         <Link className="dashboard-brand" href="/dashboard"><span className="dashboard-brand-mark" aria-hidden="true">s</span><span>skill swap</span></Link>
         <nav className="dashboard-nav" aria-label="Main navigation">
           {(["discover", "listings", "requests", "profile"] as const).map((item) => <button key={item} className={view === item ? "dashboard-nav-item active" : "dashboard-nav-item"} type="button" onClick={() => { setView(item); setNotice(null); }}>{item === "listings" ? "My listings" : item === "requests" ? "Swap requests" : item === "discover" ? "Discover" : "Profile"}</button>)}
+          {profile?.role === "admin" && <Link className="dashboard-nav-item admin-nav-link" href="/admin">Admin panel</Link>}
         </nav>
         <div className="dashboard-header-actions">
           <button className="theme-toggle" type="button" onClick={onToggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}><span aria-hidden="true">{theme === "light" ? "◐" : "☀"}</span></button>
