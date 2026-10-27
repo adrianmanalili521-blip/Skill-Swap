@@ -10,6 +10,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   orderBy,
   query,
   serverTimestamp,
@@ -143,6 +144,114 @@ export default function SprintTwoWorkspace() {
     }
     void loadDashboard();
     return () => { active = false; };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const currentUserId = user.uid;
+    let active = true;
+    let incomingLoaded = false;
+    let outgoingLoaded = false;
+
+    function finishInitialLoad() {
+      if (incomingLoaded && outgoingLoaded && active) {
+        setRequestSnapshot((current) => current.userId === currentUserId
+          ? { ...current, incomingLoaded: true, outgoingLoaded: true }
+          : {
+              userId: currentUserId,
+              incoming: [],
+              outgoing: [],
+              incomingLoaded: true,
+              outgoingLoaded: true,
+              error: null,
+            });
+      }
+    }
+
+    const incomingUnsubscribe = onSnapshot(
+      query(collection(db, "swapRequests"), where("toUserId", "==", currentUserId)),
+      (snapshot) => {
+        if (!active) return;
+        const requests = snapshot.docs
+          .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }) as SwapRequest)
+          .sort((first, second) => requestCreatedTime(second) - requestCreatedTime(first));
+        setRequestSnapshot((current) => {
+          const previous = current.userId === currentUserId ? current : {
+            userId: currentUserId,
+            incoming: [],
+            outgoing: [],
+            incomingLoaded: false,
+            outgoingLoaded: false,
+            error: null,
+          };
+          return { ...previous, incoming: requests, incomingLoaded: true };
+        });
+        incomingLoaded = true;
+        finishInitialLoad();
+      },
+      (listenerError) => {
+        if (!active) return;
+        const message = `Unable to load received swap requests: ${getAuthErrorMessage(listenerError)}`;
+        setRequestSnapshot((current) => {
+          const previous = current.userId === currentUserId ? current : {
+            userId: currentUserId,
+            incoming: [],
+            outgoing: [],
+            incomingLoaded: false,
+            outgoingLoaded: false,
+            error: null,
+          };
+          return { ...previous, incomingLoaded: true, error: previous.error ?? message };
+        });
+        incomingLoaded = true;
+        finishInitialLoad();
+      },
+    );
+    const outgoingUnsubscribe = onSnapshot(
+      query(collection(db, "swapRequests"), where("fromUserId", "==", currentUserId)),
+      (snapshot) => {
+        if (!active) return;
+        const requests = snapshot.docs
+          .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }) as SwapRequest)
+          .sort((first, second) => requestCreatedTime(second) - requestCreatedTime(first));
+        setRequestSnapshot((current) => {
+          const previous = current.userId === currentUserId ? current : {
+            userId: currentUserId,
+            incoming: [],
+            outgoing: [],
+            incomingLoaded: false,
+            outgoingLoaded: false,
+            error: null,
+          };
+          return { ...previous, outgoing: requests, outgoingLoaded: true };
+        });
+        outgoingLoaded = true;
+        finishInitialLoad();
+      },
+      (listenerError) => {
+        if (!active) return;
+        const message = `Unable to load sent swap requests: ${getAuthErrorMessage(listenerError)}`;
+        setRequestSnapshot((current) => {
+          const previous = current.userId === currentUserId ? current : {
+            userId: currentUserId,
+            incoming: [],
+            outgoing: [],
+            incomingLoaded: false,
+            outgoingLoaded: false,
+            error: null,
+          };
+          return { ...previous, outgoingLoaded: true, error: previous.error ?? message };
+        });
+        outgoingLoaded = true;
+        finishInitialLoad();
+      },
+    );
+
+    return () => {
+      active = false;
+      incomingUnsubscribe();
+      outgoingUnsubscribe();
+    };
   }, [user]);
 
   const myListings = listings.filter((listing) => listing.ownerId === user?.uid && listing.status !== "removed");
