@@ -10,6 +10,7 @@ Skill Swap is a cashless community marketplace where people share what they can 
 - Public member profile pages linked from skill listings.
 - Skill listing creation, editing, pausing, resuming, and deletion.
 - Skill discovery with keyword and category filters.
+- Role-gated admin dashboard for suspending/reactivating members and moderating skill listings.
 - Light/dark mode with per-device and per-account preference persistence.
 - User profile documents stored at `users/{uid}` in Cloud Firestore.
 - Firestore rules and composite indexes defined in `firestore.rules` and `firestore.indexes.json`.
@@ -71,7 +72,9 @@ The profile's `skillsOffered` and `learningGoals` fields are arrays edited as co
 
 - New users register from `/` with a display name, email, and password, or use Google sign-in.
 - On successful authentication, the app ensures a matching `users/{uid}` Firestore document exists, then routes to `/dashboard`.
-- The dashboard provides discovery, listing management, and profile views. Skill discovery filters active listings by keyword or category. Users can edit their bio, skill tags, and learning goals; the display name and email come from Firebase Authentication.
+- The dashboard provides discovery, listing management, and profile views. Skill discovery filters active listings by keyword or category. Users can edit their bio, skill tags, and learning goals; the display name and email come from Firebase Authentication. Administrators can use `/admin` to review accounts, suspend/reactivate non-admin members, and pause/remove/restore skill listings.
+
+To grant administrator access, set the target `users/{uid}` document's `role` to `"admin"` using a trusted Firebase Console or Admin SDK workflow. Client-side users cannot grant themselves administrator privileges. Suspended users must be reactivated by an administrator; their Firestore access is restricted while suspended.
 - Listing owners can create, edit, pause, resume, and delete their skill listings. Selecting an owner opens their public profile.
 - Theme preference is stored locally and, when signed in, synced to `users/{uid}.theme`.
 - Signing out returns the user to `/`. Direct visits to `/dashboard` require an authenticated Firebase user.
