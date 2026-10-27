@@ -22,8 +22,9 @@ import { getAuthErrorMessage } from "@/lib/auth-errors";
 import { db } from "@/lib/firebase";
 import { useTheme } from "@/lib/theme-context";
 
-type View = "discover" | "listings" | "profile";
+type View = "discover" | "listings" | "requests" | "profile";
 type SkillLevel = "beginner" | "intermediate" | "advanced";
+type SwapRequestStatus = "pending" | "accepted" | "declined" | "cancelled" | "completed";
 
 interface UserProfile {
   displayName?: string;
@@ -47,8 +48,6 @@ interface SkillListing {
   createdAt?: { toMillis?: () => number };
 }
 
-<<<<<<< Updated upstream
-=======
 interface SwapRequest {
   id: string;
   fromUserId: string;
@@ -69,7 +68,6 @@ interface SwapRequestSnapshotState {
   error: string | null;
 }
 
->>>>>>> Stashed changes
 const categories = ["Art & Design", "Business", "Cooking", "Crafts", "Language", "Music", "Technology", "Wellness", "Other"];
 
 function parseList(value: string) {
@@ -80,6 +78,10 @@ function createdTime(listing: SkillListing) {
   return listing.createdAt?.toMillis?.() ?? 0;
 }
 
+function requestCreatedTime(request: SwapRequest) {
+  return request.createdAt?.toMillis?.() ?? 0;
+}
+
 export default function SprintTwoWorkspace() {
   const { user, loading, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -87,8 +89,6 @@ export default function SprintTwoWorkspace() {
   const [view, setView] = useState<View>("discover");
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [listings, setListings] = useState<SkillListing[]>([]);
-<<<<<<< Updated upstream
-=======
   const [requestSnapshot, setRequestSnapshot] = useState<SwapRequestSnapshotState>({
     userId: null,
     incoming: [],
@@ -97,7 +97,6 @@ export default function SprintTwoWorkspace() {
     outgoingLoaded: false,
     error: null,
   });
->>>>>>> Stashed changes
   const [bio, setBio] = useState("");
   const [skillsText, setSkillsText] = useState("");
   const [goalsText, setGoalsText] = useState("");
@@ -105,8 +104,12 @@ export default function SprintTwoWorkspace() {
   const [category, setCategory] = useState("All categories");
   const [editing, setEditing] = useState<SkillListing | null>(null);
   const [showEditor, setShowEditor] = useState(false);
+  const [requestFormFor, setRequestFormFor] = useState<string | null>(null);
+  const [requestMessage, setRequestMessage] = useState("");
   const [loadingData, setLoadingData] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [sendingRequestFor, setSendingRequestFor] = useState<string | null>(null);
+  const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -267,14 +270,11 @@ export default function SprintTwoWorkspace() {
         .some((text) => text?.toLowerCase().includes(term));
     });
   }, [category, listings, search, user?.uid]);
-<<<<<<< Updated upstream
-=======
   const requestSnapshotIsCurrent = requestSnapshot.userId === user?.uid;
   const incomingRequests = requestSnapshotIsCurrent ? requestSnapshot.incoming : [];
   const outgoingRequests = requestSnapshotIsCurrent ? requestSnapshot.outgoing : [];
   const loadingRequests = !requestSnapshotIsCurrent || !requestSnapshot.incomingLoaded || !requestSnapshot.outgoingLoaded;
   const requestLoadError = requestSnapshotIsCurrent ? requestSnapshot.error : null;
->>>>>>> Stashed changes
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -338,8 +338,6 @@ export default function SprintTwoWorkspace() {
     } catch (deleteError) { setError(getAuthErrorMessage(deleteError)); }
   }
 
-<<<<<<< Updated upstream
-=======
   async function sendSwapRequest(listing: SkillListing, event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user || sendingRequestFor) return;
@@ -372,7 +370,6 @@ export default function SprintTwoWorkspace() {
     finally { setProcessingRequestId(null); }
   }
 
->>>>>>> Stashed changes
   async function onToggleTheme() {
     try { await toggleTheme(); setNotice("Theme preference saved."); }
     catch { setNotice("Theme changed on this device. Account sync was unavailable."); }
@@ -392,7 +389,7 @@ export default function SprintTwoWorkspace() {
       <header className="dashboard-header">
         <Link className="dashboard-brand" href="/dashboard"><span className="dashboard-brand-mark" aria-hidden="true">s</span><span>skill swap</span></Link>
         <nav className="dashboard-nav" aria-label="Main navigation">
-          {(["discover", "listings", "profile"] as const).map((item) => <button key={item} className={view === item ? "dashboard-nav-item active" : "dashboard-nav-item"} type="button" onClick={() => { setView(item); setNotice(null); }}>{item === "listings" ? "My listings" : item === "discover" ? "Discover" : "Profile"}</button>)}
+          {(["discover", "listings", "requests", "profile"] as const).map((item) => <button key={item} className={view === item ? "dashboard-nav-item active" : "dashboard-nav-item"} type="button" onClick={() => { setView(item); setNotice(null); }}>{item === "listings" ? "My listings" : item === "requests" ? "Swap requests" : item === "discover" ? "Discover" : "Profile"}</button>)}
         </nav>
         <div className="dashboard-header-actions">
           <button className="theme-toggle" type="button" onClick={onToggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}><span aria-hidden="true">{theme === "light" ? "◐" : "☀"}</span></button>
@@ -401,15 +398,12 @@ export default function SprintTwoWorkspace() {
         </div>
       </header>
       <div className="dashboard-main">
-        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? "Find your next exchange." : view === "listings" ? "Share what you know." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : "A good exchange starts with a little context about you."}</p></section>
+        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? "Find your next exchange." : view === "listings" ? "Share what you know." : view === "requests" ? "Make an exchange happen." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : view === "requests" ? "Track the requests you send and the offers you receive." : "A good exchange starts with a little context about you."}</p></section>
         {error && <p className="dashboard-message dashboard-error" role="alert">{error}</p>}{notice && <p className="dashboard-message dashboard-notice" role="status">{notice}</p>}
 
         {view === "discover" && <section aria-label="Discover skills">
           <div className="discover-tools"><label className="search-field"><span className="search-icon" aria-hidden="true">⌕</span><span className="visually-hidden">Search skills, tags, or people</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search skills, tags, or people" /></label><label className="category-filter"><span className="visually-hidden">Filter by category</span><select value={category} onChange={(event) => setCategory(event.target.value)}><option>All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); setView("listings"); }}><span aria-hidden="true">＋</span> Offer a skill</button></div>
           <div className="results-heading"><h2>Community skills</h2><span>{loadingData ? "Loading..." : `${discoveredListings.length} ${discoveredListings.length === 1 ? "listing" : "listings"}`}</span></div>
-<<<<<<< Updated upstream
-          {loadingData ? <div className="empty-state">Loading skills...</div> : discoveredListings.length ? <div className="skill-grid">{discoveredListings.map((listing, index) => <article className="skill-card" key={listing.id} style={{ animationDelay: `${Math.min(index * 45, 270)}ms` }}><div className="skill-card-topline"><span className="skill-category">{listing.category}</span><span className="skill-level">{listing.level}</span></div><h3>{listing.title}</h3><p className="skill-description">{listing.description || "This member is happy to share what they know."}</p>{listing.tags.length > 0 && <div className="skill-tags">{listing.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="skill-card-footer"><Link href={`/profile/${listing.ownerId}`} className="listing-owner"><span className="mini-avatar">{listing.ownerName.slice(0, 1).toUpperCase()}</span><span>{listing.ownerName}</span></Link><span className="listing-status">Open to swap</span></div></article>)}</div> : <div className="empty-state"><strong>No matching skills yet.</strong><span>Try another search, or be the first to share a skill.</span></div>}
-=======
           {loadingData ? <div className="empty-state">Loading skills...</div> : discoveredListings.length ? <div className="skill-grid">{discoveredListings.map((listing, index) => {
             const previousRequest = outgoingRequests.find((request) => request.skillId === listing.id && (request.status === "pending" || request.status === "accepted"));
             const requestFormOpen = requestFormFor === listing.id;
@@ -428,7 +422,6 @@ export default function SprintTwoWorkspace() {
               {outgoingRequests.length ? <div className="request-list">{outgoingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST SENT</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>{request.message && <p className="request-message">{request.message}</p>}{request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}</article>)}</div> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
             </section>
           </>}
->>>>>>> Stashed changes
         </section>}
 
         {view === "listings" && <section aria-label="Manage your skill listings"><div className="section-toolbar"><div><h2>Your listings</h2><p>{myListings.length} total · {myListings.filter((item) => item.status === "active").length} active</p></div>{!showEditor && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); }}>＋ New listing</button>}</div>

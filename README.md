@@ -14,11 +14,7 @@ Skill Swap is a cashless community marketplace where people share what they can 
 - User profile documents stored at `users/{uid}` in Cloud Firestore.
 - Firestore rules and composite indexes defined in `firestore.rules` and `firestore.indexes.json`.
 
-<<<<<<< Updated upstream
-The profile's `skillsOffered` and `learningGoals` fields are arrays edited as comma-separated text. They are profile tags, separate from full skill listing records. Swap requests, real-time updates, and the admin panel remain planned for later sprints.
-=======
 The profile's `skillsOffered` and `learningGoals` fields are arrays edited as comma-separated text. They are profile tags, separate from full skill listing records. Swap requests and live request-status updates are available in the dashboard; the admin panel remains planned for a later sprint.
->>>>>>> Stashed changes
 
 ## Prerequisites
 
