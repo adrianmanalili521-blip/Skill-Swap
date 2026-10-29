@@ -12,6 +12,7 @@ Skill Swap is a cashless community marketplace where people share what they can 
 - Skill discovery with keyword and category filters.
 - Swap requests from discovery listings, with received/sent request views and accept, decline, and cancel actions. Recipients select one of the requester's active listings when accepting.
 - Real-time in-app notifications for new swap requests and accepted or declined requests, with unread counts and read controls.
+- Personal analytics for members and platform activity analytics for admins, including six-month trends and category breakdowns.
 - Light/dark mode with per-device and per-account preference persistence.
 - User profile documents stored at `users/{uid}` in Cloud Firestore.
 - Firestore rules and composite indexes defined in `firestore.rules` and `firestore.indexes.json`.
