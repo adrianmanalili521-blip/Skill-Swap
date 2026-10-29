@@ -6,6 +6,7 @@
 users/{userId}
 skills/{skillId}
 swapRequests/{requestId}
+categoryRequests/{requestId}
 reviews/{reviewId}
 ```
 
@@ -51,7 +52,7 @@ Auto-ID document. One doc per skill listing a user offers.
 
 **Indexes needed:** `category + createdAt`, `status + createdAt` (see `firestore.indexes.json`).
 
-Admins can pause, remove, and restore skill listings from `/admin`. Removed listings are soft-moderated by changing `status` to `"removed"`; their documents are retained.
+Members create and manage their own skill listings. Admins can pause, remove, and restore listings from `/admin`, but cannot create or swap skills. Removed listings are soft-moderated by changing `status` to `"removed"`; their documents are retained.
 
 ---
 
@@ -72,6 +73,23 @@ Auto-ID document. Represents one user requesting a swap tied to a specific skill
 **Indexes needed:** `toUserId + status + createdAt`, `fromUserId + status + createdAt`.
 
 The dashboard creates requests from active skill listings. A request starts as `pending`; only the recipient can change it to `accepted` or `declined`, and only the sender can change it to `cancelled`. Status changes update `updatedAt`; participant IDs and the requested skill cannot be changed after creation.
+
+---
+
+## `categoryRequests/{requestId}`
+Auto-ID document. A member's request to add a skill category.
+
+| Field | Type | Notes |
+|---|---|---|
+| `requesterId` | string | references `users/{uid}` |
+| `requesterName` | string | denormalized for admin review |
+| `name` | string | requested category name (2–40 characters) |
+| `reason` | string | optional explanation (up to 500 characters) |
+| `status` | `"pending"` \| `"approved"` \| `"declined"` | admins review requests from `/admin` |
+| `createdAt` | timestamp | |
+| `updatedAt` | timestamp | |
+
+Members can read their own requests and approved categories. Approving a request adds its category to discovery filters and listing forms.
 
 ---
 

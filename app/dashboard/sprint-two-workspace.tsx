@@ -69,7 +69,7 @@ interface SwapRequestSnapshotState {
   error: string | null;
 }
 
-const categories = ["Art & Design", "Business", "Cooking", "Crafts", "Language", "Music", "Technology", "Wellness", "Other"];
+const defaultCategories = ["Art & Design", "Business", "Cooking", "Crafts", "Language", "Music", "Technology", "Wellness", "Other"];
 
 function parseList(value: string) {
   return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
@@ -90,6 +90,7 @@ export default function SprintTwoWorkspace() {
   const [view, setView] = useState<View>("discover");
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [listings, setListings] = useState<SkillListing[]>([]);
+  const [approvedCategories, setApprovedCategories] = useState<string[]>([]);
   const [requestSnapshot, setRequestSnapshot] = useState<SwapRequestSnapshotState>({
     userId: null,
     incoming: [],
@@ -105,11 +106,15 @@ export default function SprintTwoWorkspace() {
   const [category, setCategory] = useState("All categories");
   const [editing, setEditing] = useState<SkillListing | null>(null);
   const [showEditor, setShowEditor] = useState(false);
+  const [showCategoryRequestForm, setShowCategoryRequestForm] = useState(false);
+  const [categoryRequestName, setCategoryRequestName] = useState("");
+  const [categoryRequestReason, setCategoryRequestReason] = useState("");
   const [requestFormFor, setRequestFormFor] = useState<string | null>(null);
   const [requestMessage, setRequestMessage] = useState("");
   const [loadingData, setLoadingData] = useState(true);
   const [saving, setSaving] = useState(false);
   const [sendingRequestFor, setSendingRequestFor] = useState<string | null>(null);
+  const [sendingCategoryRequest, setSendingCategoryRequest] = useState(false);
   const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -155,6 +160,34 @@ export default function SprintTwoWorkspace() {
 
   useEffect(() => {
     if (!user) return;
+    let active = true;
+    const unsubscribe = onSnapshot(
+      query(collection(db, "categoryRequests"), where("status", "==", "approved")),
+      (snapshot) => {
+        if (!active) return;
+        setApprovedCategories(snapshot.docs
+          .map((categoryDoc) => String(categoryDoc.data().name ?? "").trim())
+          .filter(Boolean));
+      },
+      (listenerError) => {
+        if (!active) return;
+        const message = listenerError instanceof Error && "code" in listenerError
+          && listenerError.code === "permission-denied"
+          ? "Firestore denied access to approved categories. Deploy the latest Firestore rules, then reload."
+          : `Unable to load approved categories: ${getAuthErrorMessage(listenerError)}`;
+        setError(message);
+      },
+    );
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [user]);
+
+  const userRole = profile?.role;
+
+  useEffect(() => {
+    if (!user || !userRole || userRole === "admin") return;
     const currentUserId = user.uid;
     let active = true;
     let incomingLoaded = false;
@@ -259,9 +292,22 @@ export default function SprintTwoWorkspace() {
       incomingUnsubscribe();
       outgoingUnsubscribe();
     };
-  }, [user]);
+  }, [user, userRole]);
 
   const myListings = listings.filter((listing) => listing.ownerId === user?.uid && listing.status !== "removed");
+  const categories = useMemo(
+    () => {
+      const uniqueCategories = new Map<string, string>();
+      [...defaultCategories, ...approvedCategories].forEach((name) => {
+        const normalizedName = name.trim().toLowerCase();
+        if (normalizedName && !uniqueCategories.has(normalizedName)) {
+          uniqueCategories.set(normalizedName, name.trim());
+        }
+      });
+      return [...uniqueCategories.values()];
+    },
+    [approvedCategories],
+  );
   const discoveredListings = useMemo(() => {
     const term = search.trim().toLowerCase();
     return listings.filter((listing) => {
@@ -292,7 +338,7 @@ export default function SprintTwoWorkspace() {
 
   async function saveListing(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!user) return;
+    if (!user || profile?.role === "admin") return;
     const form = new FormData(event.currentTarget);
     const data = {
       ownerId: user.uid,
@@ -341,7 +387,7 @@ export default function SprintTwoWorkspace() {
 
   async function sendSwapRequest(listing: SkillListing, event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!user || sendingRequestFor) return;
+    if (!user || profile?.role === "admin" || sendingRequestFor) return;
     setSendingRequestFor(listing.id); setError(null); setNotice(null);
     try {
       await addDoc(collection(db, "swapRequests"), {
@@ -362,13 +408,50 @@ export default function SprintTwoWorkspace() {
   }
 
   async function updateSwapRequest(request: SwapRequest, status: "accepted" | "declined" | "cancelled") {
-    if (processingRequestId) return;
+    if (profile?.role === "admin" || processingRequestId) return;
     setProcessingRequestId(request.id); setError(null); setNotice(null);
     try {
       await updateDoc(doc(db, "swapRequests", request.id), { status, updatedAt: serverTimestamp() });
       setNotice(status === "accepted" ? "Swap request accepted." : status === "declined" ? "Swap request declined." : "Swap request cancelled.");
     } catch (requestError) { setError(getAuthErrorMessage(requestError)); }
     finally { setProcessingRequestId(null); }
+  }
+
+  async function sendCategoryRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = categoryRequestName.trim();
+    if (!user || profile?.role === "admin" || sendingCategoryRequest) return;
+    if (name.length < 2) {
+      setError("Enter a category name with at least two characters.");
+      return;
+    }
+    if (categories.some((categoryName) => categoryName.toLowerCase() === name.toLowerCase())) {
+      setError("That category is already available.");
+      return;
+    }
+
+    setSendingCategoryRequest(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await addDoc(collection(db, "categoryRequests"), {
+        requesterId: user.uid,
+        requesterName: profile?.displayName || user.displayName || "Skill Swap member",
+        name,
+        reason: categoryRequestReason.trim(),
+        status: "pending",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      setCategoryRequestName("");
+      setCategoryRequestReason("");
+      setShowCategoryRequestForm(false);
+      setNotice("Category request sent to the admin.");
+    } catch (requestError) {
+      setError(getAuthErrorMessage(requestError));
+    } finally {
+      setSendingCategoryRequest(false);
+    }
   }
 
   async function onToggleTheme() {
@@ -382,16 +465,21 @@ export default function SprintTwoWorkspace() {
     catch (signOutError) { setError(getAuthErrorMessage(signOutError)); setSigningOut(false); }
   }
 
-  if (loading || !user) return <main className="dashboard-loading" role="status"><span className="loading-indicator" /><span>{loading ? "Checking your session" : "Returning to sign in"}</span></main>;
+  if (loading || !user || (loadingData && !profile)) {
+    const loadingMessage = loading ? "Checking your session" : !user ? "Returning to sign in" : "Loading your dashboard";
+    return <main className="dashboard-loading" role="status"><span className="loading-indicator" /><span>{loadingMessage}</span></main>;
+  }
   const displayName = profile?.displayName || user.displayName || "there";
+  const isAdmin = profile?.role === "admin";
+  const navigationItems: View[] = isAdmin ? ["discover", "profile"] : ["discover", "listings", "requests", "profile"];
 
   return (
     <main className="dashboard-shell" data-theme={theme}>
       <header className="dashboard-header">
         <Link className="dashboard-brand" href="/dashboard"><span className="dashboard-brand-mark" aria-hidden="true">s</span><span>skill swap</span></Link>
         <nav className="dashboard-nav" aria-label="Main navigation">
-          {(["discover", "listings", "requests", "profile"] as const).map((item) => <button key={item} className={view === item ? "dashboard-nav-item active" : "dashboard-nav-item"} type="button" onClick={() => { setView(item); setNotice(null); }}>{item === "listings" ? "My listings" : item === "requests" ? "Swap requests" : item === "discover" ? "Discover" : "Profile"}</button>)}
-          {profile?.role === "admin" && <Link className="dashboard-nav-item admin-nav-link" href="/admin">Admin panel</Link>}
+          {navigationItems.map((item) => <button key={item} className={view === item ? "dashboard-nav-item active" : "dashboard-nav-item"} type="button" onClick={() => { setView(item); setNotice(null); }}>{item === "listings" ? "My listings" : item === "requests" ? "Swap requests" : item === "discover" ? "Discover" : "Profile"}</button>)}
+          {isAdmin && <Link className="dashboard-nav-item admin-nav-link" href="/admin">Admin panel</Link>}
         </nav>
         <div className="dashboard-header-actions">
           <button className="theme-toggle" type="button" onClick={onToggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}><span aria-hidden="true">{theme === "light" ? "◐" : "☀"}</span></button>
@@ -400,19 +488,21 @@ export default function SprintTwoWorkspace() {
         </div>
       </header>
       <div className="dashboard-main">
-        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? "Find your next exchange." : view === "listings" ? "Share what you know." : view === "requests" ? "Make an exchange happen." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : view === "requests" ? "Track the requests you send and the offers you receive." : "A good exchange starts with a little context about you."}</p></section>
+        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? isAdmin ? "Explore community skills." : "Find your next exchange." : view === "listings" ? "Share what you know." : view === "requests" ? "Make an exchange happen." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? isAdmin ? "Browse skills shared by your community." : "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : view === "requests" ? "Track the requests you send and the offers you receive." : "A good exchange starts with a little context about you."}</p></section>
         {error && <p className="dashboard-message dashboard-error" role="alert">{error}</p>}{notice && <p className="dashboard-message dashboard-notice" role="status">{notice}</p>}
 
         {view === "discover" && <section aria-label="Discover skills">
-          <div className="discover-tools"><label className="search-field"><span className="search-icon" aria-hidden="true">⌕</span><span className="visually-hidden">Search skills, tags, or people</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search skills, tags, or people" /></label><label className="category-filter"><span className="visually-hidden">Filter by category</span><select value={category} onChange={(event) => setCategory(event.target.value)}><option>All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); setView("listings"); }}><span aria-hidden="true">＋</span> Offer a skill</button></div>
+          <div className="discover-tools"><label className="search-field"><span className="search-icon" aria-hidden="true">⌕</span><span className="visually-hidden">Search skills, tags, or people</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search skills, tags, or people" /></label><label className="category-filter"><span className="visually-hidden">Filter by category</span><select value={category} onChange={(event) => setCategory(event.target.value)}><option>All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></label>{!isAdmin && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); setView("listings"); }}><span aria-hidden="true">＋</span> Offer a skill</button>}</div>
+          {!isAdmin && <div className="category-request-entry"><button className="text-action" type="button" onClick={() => setShowCategoryRequestForm((shown) => !shown)}>{showCategoryRequestForm ? "Close category request" : "Request a category"}</button></div>}
+          {!isAdmin && showCategoryRequestForm && <form className="skill-editor category-request-form" onSubmit={(event) => void sendCategoryRequest(event)}><h2>Suggest a category</h2><label className="dashboard-field"><span>Category name</span><input value={categoryRequestName} onChange={(event) => setCategoryRequestName(event.target.value)} minLength={2} maxLength={40} required placeholder="e.g. Gardening" /></label><label className="dashboard-field"><span>Why should we add it? <small>Optional</small></span><textarea value={categoryRequestReason} onChange={(event) => setCategoryRequestReason(event.target.value)} maxLength={500} rows={3} placeholder="Tell the admin what skills this category would cover." /></label><div className="editor-actions"><button className="primary-action" type="submit" disabled={sendingCategoryRequest}>{sendingCategoryRequest ? "Sending..." : "Send category request"}</button></div></form>}
           <div className="results-heading"><h2>Community skills</h2><span>{loadingData ? "Loading..." : `${discoveredListings.length} ${discoveredListings.length === 1 ? "listing" : "listings"}`}</span></div>
           {loadingData ? <div className="empty-state">Loading skills...</div> : discoveredListings.length ? <div className="skill-grid">{discoveredListings.map((listing, index) => {
-            const previousRequest = outgoingRequests.find((request) => request.skillId === listing.id && (request.status === "pending" || request.status === "accepted"));
+            const previousRequest = !isAdmin && outgoingRequests.find((request) => request.skillId === listing.id && (request.status === "pending" || request.status === "accepted"));
             const requestFormOpen = requestFormFor === listing.id;
             return <article className="skill-card" key={listing.id} style={{ animationDelay: `${Math.min(index * 45, 270)}ms` }}><div className="skill-card-topline"><span className="skill-category">{listing.category}</span><span className="skill-level">{listing.level}</span></div><h3>{listing.title}</h3><p className="skill-description">{listing.description || "This member is happy to share what they know."}</p>{listing.tags.length > 0 && <div className="skill-tags">{listing.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="skill-card-footer"><Link href={`/profile/${listing.ownerId}`} className="listing-owner"><span className="mini-avatar">{listing.ownerName.slice(0, 1).toUpperCase()}</span><span>{listing.ownerName}</span></Link><span className="listing-status">Open to swap</span></div>
-              {previousRequest ? <p className="request-existing-status">Request {previousRequest.status}</p> : requestFormOpen ? <form className="swap-request-form" onSubmit={(event) => void sendSwapRequest(listing, event)}><label className="dashboard-field"><span>Message <small>Optional</small></span><textarea value={requestMessage} onChange={(event) => setRequestMessage(event.target.value)} maxLength={500} rows={3} placeholder="What would you like to learn?" /></label><div className="editor-actions"><button className="secondary-action" type="button" onClick={() => { setRequestFormFor(null); setRequestMessage(""); }}>Cancel</button><button className="primary-action" type="submit" disabled={sendingRequestFor !== null}>{sendingRequestFor === listing.id ? "Sending..." : "Send request"}</button></div></form> : <button className="secondary-action request-start" type="button" disabled={loadingRequests} onClick={() => { setRequestFormFor(listing.id); setRequestMessage(""); }}>{loadingRequests ? "Loading requests..." : outgoingRequests.some((request) => request.skillId === listing.id && request.status === "declined") ? "Request again" : "Request a swap"}</button>}
+              {!isAdmin && (previousRequest ? <p className="request-existing-status">Request {previousRequest.status}</p> : requestFormOpen ? <form className="swap-request-form" onSubmit={(event) => void sendSwapRequest(listing, event)}><label className="dashboard-field"><span>Message <small>Optional</small></span><textarea value={requestMessage} onChange={(event) => setRequestMessage(event.target.value)} maxLength={500} rows={3} placeholder="What would you like to learn?" /></label><div className="editor-actions"><button className="secondary-action" type="button" onClick={() => { setRequestFormFor(null); setRequestMessage(""); }}>Cancel</button><button className="primary-action" type="submit" disabled={sendingRequestFor !== null}>{sendingRequestFor === listing.id ? "Sending..." : "Send request"}</button></div></form> : <button className="secondary-action request-start" type="button" disabled={loadingRequests} onClick={() => { setRequestFormFor(listing.id); setRequestMessage(""); }}>{loadingRequests ? "Loading requests..." : outgoingRequests.some((request) => request.skillId === listing.id && request.status === "declined") ? "Request again" : "Request a swap"}</button>)}
             </article>;
-          })}</div> : <div className="empty-state"><strong>No matching skills yet.</strong><span>Try another search, or be the first to share a skill.</span></div>}
+          })}</div> : <div className="empty-state"><strong>No matching skills yet.</strong><span>{isAdmin ? "Try another search or category filter." : "Try another search, or be the first to share a skill."}</span></div>}
         </section>}
 
         {view === "requests" && <section className="swap-requests-view" aria-label="Swap requests">
@@ -426,7 +516,7 @@ export default function SprintTwoWorkspace() {
           </>}
         </section>}
 
-        {view === "listings" && <section aria-label="Manage your skill listings"><div className="section-toolbar"><div><h2>Your listings</h2><p>{myListings.length} total · {myListings.filter((item) => item.status === "active").length} active</p></div>{!showEditor && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); }}>＋ New listing</button>}</div>
+        {view === "listings" && !isAdmin && <section aria-label="Manage your skill listings"><div className="section-toolbar"><div><h2>Your listings</h2><p>{myListings.length} total · {myListings.filter((item) => item.status === "active").length} active</p></div>{!showEditor && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); }}>＋ New listing</button>}</div>
           {showEditor && <form className="skill-editor" onSubmit={saveListing}><div className="editor-heading"><div><p className="dashboard-eyebrow">{editing ? "EDIT LISTING" : "NEW LISTING"}</p><h2>{editing ? "Refine your offer" : "What can you teach?"}</h2></div><button className="icon-button" type="button" onClick={() => { setShowEditor(false); setEditing(null); }} aria-label="Close listing form">×</button></div><div className="editor-grid"><label className="dashboard-field"><span>Skill title</span><input name="title" defaultValue={editing?.title ?? ""} maxLength={70} placeholder="e.g. Beginner watercolor techniques" required /></label><label className="dashboard-field"><span>Category</span><select name="category" defaultValue={editing?.category ?? categories[0]}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label className="dashboard-field"><span>Experience level</span><select name="level" defaultValue={editing?.level ?? "beginner"}><option value="beginner">Beginner friendly</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></label><label className="dashboard-field"><span>Tags <small>Separate with commas</small></span><input name="tags" defaultValue={editing?.tags.join(", ") ?? ""} placeholder="remote, materials included" /></label><label className="dashboard-field editor-description"><span>Description</span><textarea name="description" defaultValue={editing?.description ?? ""} maxLength={500} placeholder="What will someone learn? What should they bring?" rows={4} /></label></div><div className="editor-actions"><button className="secondary-action" type="button" onClick={() => { setShowEditor(false); setEditing(null); }}>Cancel</button><button className="primary-action" type="submit" disabled={saving}>{saving ? "Saving..." : editing ? "Save changes" : "Publish listing"}</button></div></form>}
           {loadingData ? <div className="empty-state">Loading your listings...</div> : myListings.length ? <div className="managed-listings">{myListings.map((listing) => <article className="managed-listing" key={listing.id}><div className="managed-listing-copy"><span className={`status-dot ${listing.status}`} /> <span className="managed-category">{listing.category} · {listing.status}</span><h3>{listing.title}</h3><p>{listing.description || "No description added."}</p></div><div className="managed-listing-actions"><button className="text-action" type="button" onClick={() => { setEditing(listing); setShowEditor(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Edit</button><button className="text-action" type="button" onClick={() => setListingStatus(listing, listing.status === "paused" ? "active" : "paused")}>{listing.status === "paused" ? "Resume" : "Pause"}</button><button className="text-action destructive-action" type="button" onClick={() => removeListing(listing)}>Delete</button></div></article>)}</div> : !showEditor ? <div className="empty-state"><strong>Your first listing starts here.</strong><span>Share a skill you enjoy teaching and help someone take their next step.</span><button className="primary-action" type="button" onClick={() => setShowEditor(true)}>＋ Create a listing</button></div> : null}
         </section>}

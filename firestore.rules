@@ -65,9 +65,11 @@ service cloud.firestore {
     match /skills/{skillId} {
       allow read: if isActiveUser();
       allow create: if isActiveUser()
+                    && !isAdmin()
                     && request.resource.data.ownerId == request.auth.uid;
       allow update: if (isOwner(resource.data.ownerId)
                && isActiveUser()
+               && !isAdmin()
                && request.resource.data.ownerId == resource.data.ownerId)
             || (
               isAdmin()
@@ -75,16 +77,55 @@ service cloud.firestore {
               && request.resource.data.status in ['active', 'paused', 'removed']
               && request.resource.data.updatedAt is timestamp
             );
-      allow delete: if (isOwner(resource.data.ownerId) && isActiveUser()) || isAdmin();
+      allow delete: if (isOwner(resource.data.ownerId) && isActiveUser() && !isAdmin()) || isAdmin();
+    }
+
+    // ---------- categoryRequests/{requestId} ----------
+    // Active members may suggest categories; admins review and approve or decline them.
+    match /categoryRequests/{requestId} {
+      allow read: if isAdmin()
+                  || (isActiveUser() && resource.data.status == 'approved');
+
+      allow create: if isActiveUser()
+                    && !isAdmin()
+                    && request.resource.data.keys().hasAll([
+                      'requesterId', 'requesterName', 'name', 'reason',
+                      'status', 'createdAt', 'updatedAt'
+                    ])
+                    && request.resource.data.keys().hasOnly([
+                      'requesterId', 'requesterName', 'name', 'reason',
+                      'status', 'createdAt', 'updatedAt'
+                    ])
+                    && request.resource.data.requesterId == request.auth.uid
+                    && request.resource.data.requesterName is string
+                    && request.resource.data.requesterName.size() <= 100
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() >= 2
+                    && request.resource.data.name.size() <= 40
+                    && request.resource.data.reason is string
+                    && request.resource.data.reason.size() <= 500
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.createdAt is timestamp
+                    && request.resource.data.updatedAt is timestamp;
+
+      allow update: if isAdmin()
+                    && resource.data.status == 'pending'
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['status', 'updatedAt'])
+                    && request.resource.data.status in ['approved', 'declined']
+                    && request.resource.data.updatedAt is timestamp;
+
+      allow delete: if false;
     }
 
     // ---------- swapRequests/{requestId} ----------
     // Only the two participants (sender/receiver) can read a request.
     // Senders may cancel pending requests; recipients may accept or decline.
     match /swapRequests/{requestId} {
-      allow read: if (isActiveUser() && isParticipant(resource.data) || isAdmin());
+      allow read: if isActiveUser() && !isAdmin() && isParticipant(resource.data);
 
-      allow create: if isSignedIn()
+      allow create: if isActiveUser()
+                    && !isAdmin()
                     && request.resource.data.keys().hasAll([
                       'fromUserId', 'toUserId', 'skillId', 'offeredSkillId',
                       'message', 'status', 'createdAt', 'updatedAt'
@@ -114,6 +155,8 @@ service cloud.firestore {
 
       allow update: if (
                       isParticipant(resource.data)
+                      && isActiveUser()
+                      && !isAdmin()
                       && resource.data.status == 'pending'
                       && request.resource.data.diff(resource.data).affectedKeys()
                         .hasOnly(['status', 'updatedAt'])
@@ -128,9 +171,9 @@ service cloud.firestore {
                           && request.resource.data.status == 'cancelled'
                         )
                       )
-                    ) || isAdmin();
+                    );
 
-      allow delete: if (isActiveUser() && isParticipant(resource.data)) || isAdmin();
+      allow delete: if isActiveUser() && !isAdmin() && isParticipant(resource.data);
     }
 
     // ---------- reviews/{reviewId} ----------
