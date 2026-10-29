@@ -8,6 +8,7 @@ skills/{skillId}
 swapRequests/{requestId}
 categoryRequests/{requestId}
 reviews/{reviewId}
+notifications/{notificationId}
 ```
 
 ---
@@ -64,7 +65,7 @@ Auto-ID document. Represents one user requesting a swap tied to a specific skill
 | `fromUserId` | string | requester |
 | `toUserId` | string | skill owner |
 | `skillId` | string | the `skills/{skillId}` being requested |
-| `offeredSkillId` | string \| null | optional — what the requester offers in exchange |
+| `offeredSkillId` | string \| null | the active skill listing the recipient selects from the requester when accepting |
 | `message` | string | optional note from requester |
 | `status` | `"pending"` \| `"accepted"` \| `"declined"` \| `"cancelled"` \| `"completed"` | |
 | `createdAt` | timestamp | |
@@ -72,7 +73,23 @@ Auto-ID document. Represents one user requesting a swap tied to a specific skill
 
 **Indexes needed:** `toUserId + status + createdAt`, `fromUserId + status + createdAt`.
 
-The dashboard creates requests from active skill listings. A request starts as `pending`; only the recipient can change it to `accepted` or `declined`, and only the sender can change it to `cancelled`. Status changes update `updatedAt`; participant IDs and the requested skill cannot be changed after creation.
+The dashboard creates requests from active skill listings. A request starts as `pending`; only the recipient can change it to `accepted` or `declined`, and only the sender can change it to `cancelled`. To accept, the recipient must select an active skill listing owned by the requester; its ID is stored in `offeredSkillId`. Status changes update `updatedAt`; participant IDs and the requested skill cannot be changed after creation.
+
+---
+
+## `notifications/{notificationId}`
+Auto-ID document. Created atomically with the related swap request or decision.
+
+| Field | Type | Notes |
+|---|---|---|
+| `recipientId` | string | user who receives the notification |
+| `actorId` | string | user who initiated the request or decision |
+| `requestId` | string | related `swapRequests/{requestId}` document |
+| `kind` | `"swap_request"` \| `"swap_accepted"` \| `"swap_declined"` | event represented by this notification |
+| `read` | boolean | recipients can mark their notifications as read |
+| `createdAt` | timestamp | server timestamp |
+
+Notifications stream live in the dashboard. Recipients can mark one notification read by opening it, or mark all as read.
 
 ---
 
