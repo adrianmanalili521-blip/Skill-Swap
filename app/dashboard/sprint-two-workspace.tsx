@@ -61,7 +61,7 @@ interface SwapRequest {
   createdAt?: { toMillis?: () => number };
 }
 
-type NotificationKind = "swap_request" | "swap_accepted" | "swap_declined";
+type NotificationKind = "swap_request" | "swap_accepted" | "swap_declined" | "category_request";
 
 interface AppNotification {
   id: string;
@@ -211,7 +211,7 @@ export default function SprintTwoWorkspace() {
   const userRole = profile?.role;
 
   useEffect(() => {
-    if (!user || !userRole || userRole === "admin") return;
+    if (!user || !userRole) return;
     return onSnapshot(
       query(collection(db, "notifications"), where("recipientId", "==", user.uid)),
       (snapshot) => {
@@ -525,7 +525,15 @@ export default function SprintTwoWorkspace() {
     setError(null);
     setNotice(null);
     try {
-      await addDoc(collection(db, "categoryRequests"), {
+      const adminsSnapshot = await getDocs(query(collection(db, "users"), where("role", "==", "admin")));
+      const admins = adminsSnapshot.docs.filter((adminDoc) => adminDoc.data().status !== "suspended");
+      if (admins.length === 0) {
+        throw new Error("No active admin accounts were found. Your category request was not sent.");
+      }
+
+      const batch = writeBatch(db);
+      const categoryRequestRef = doc(collection(db, "categoryRequests"));
+      batch.set(categoryRequestRef, {
         requesterId: user.uid,
         requesterName: profile?.displayName || user.displayName || "Skill Swap member",
         name,
@@ -534,6 +542,17 @@ export default function SprintTwoWorkspace() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      admins.forEach((adminDoc) => {
+        batch.set(doc(collection(db, "notifications")), {
+          recipientId: adminDoc.id,
+          actorId: user.uid,
+          requestId: categoryRequestRef.id,
+          kind: "category_request",
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
       setCategoryRequestName("");
       setCategoryRequestReason("");
       setShowCategoryRequestForm(false);
@@ -552,7 +571,11 @@ export default function SprintTwoWorkspace() {
         await updateDoc(doc(db, "notifications", notification.id), { read: true });
       }
       setNotificationsOpen(false);
-      setView("requests");
+      if (notification.kind === "category_request") {
+        router.push("/admin");
+      } else {
+        setView("requests");
+      }
     } catch (readError) {
       setError(getAuthErrorMessage(readError));
     }
@@ -610,7 +633,7 @@ export default function SprintTwoWorkspace() {
             </button>
             {notificationsOpen && <section className="notification-popover" aria-label="Notifications">
               <div className="notification-popover-heading"><strong>Notifications</strong>{unreadNotificationCount > 0 && <button className="text-action" type="button" onClick={() => void markAllNotificationsRead()}>Mark all read</button>}</div>
-              {notificationError ? <p className="notification-empty" role="alert">{notificationError}</p> : notifications.length ? <ul className="notification-list">{notifications.slice(0, 20).map((notification) => <li key={notification.id}><button className={`notification-item${notification.read ? "" : " unread"}`} type="button" onClick={() => void openNotification(notification)}><span className="notification-dot" aria-hidden="true" /><span>{notification.kind === "swap_request" ? "You received a new swap request." : notification.kind === "swap_accepted" ? "Your swap request was accepted." : "Your swap request was declined."}</span></button></li>)}</ul> : <p className="notification-empty">You’re all caught up.</p>}
+              {notificationError ? <p className="notification-empty" role="alert">{notificationError}</p> : notifications.length ? <ul className="notification-list">{notifications.slice(0, 20).map((notification) => <li key={notification.id}><button className={`notification-item${notification.read ? "" : " unread"}`} type="button" onClick={() => void openNotification(notification)}><span className="notification-dot" aria-hidden="true" /><span>{notification.kind === "category_request" ? "A member requested a new skill category." : notification.kind === "swap_request" ? "You received a new swap request." : notification.kind === "swap_accepted" ? "Your swap request was accepted." : "Your swap request was declined."}</span></button></li>)}</ul> : <p className="notification-empty">You’re all caught up.</p>}
             </section>}
           </div>
           <button className="theme-toggle" type="button" onClick={onToggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}><span aria-hidden="true">{theme === "light" ? "◐" : "☀"}</span></button>
