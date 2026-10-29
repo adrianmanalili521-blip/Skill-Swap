@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { doc, getDoc, getDocs, collection, serverTimestamp, updateDoc } from "firebase/firestore";
+import { getRecentMonths, timestampMonthKey } from "@/lib/analytics";
 import { useAuth } from "@/lib/auth-context";
 import { getAuthErrorMessage } from "@/lib/auth-errors";
 import { db } from "@/lib/firebase";
@@ -12,6 +13,7 @@ import { useTheme } from "@/lib/theme-context";
 type AdminTab = "users" | "listings" | "categories";
 type UserStatus = "active" | "suspended";
 type ListingStatus = "active" | "paused" | "removed";
+type SwapRequestStatus = "pending" | "accepted" | "declined" | "cancelled" | "completed";
 
 interface AdminUser {
   id: string;
@@ -45,6 +47,12 @@ interface AdminCategoryRequest {
   createdAt?: { toMillis?: () => number };
 }
 
+interface AdminSwapRequest {
+  id: string;
+  status: SwapRequestStatus;
+  createdAt?: { toMillis?: () => number };
+}
+
 function createdTime(value: { createdAt?: { toMillis?: () => number } }) {
   return value.createdAt?.toMillis?.() ?? 0;
 }
@@ -59,6 +67,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [listings, setListings] = useState<AdminListing[]>([]);
   const [categoryRequests, setCategoryRequests] = useState<AdminCategoryRequest[]>([]);
+  const [swapRequests, setSwapRequests] = useState<AdminSwapRequest[]>([]);
   const [search, setSearch] = useState("");
   const [loadingData, setLoadingData] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -101,10 +110,11 @@ export default function AdminPage() {
       setLoadingData(true);
       setError(null);
       try {
-        const [userSnapshot, listingSnapshot, categoryRequestSnapshot] = await Promise.all([
+        const [userSnapshot, listingSnapshot, categoryRequestSnapshot, swapRequestSnapshot] = await Promise.all([
           getDocs(collection(db, "users")),
           getDocs(collection(db, "skills")),
           getDocs(collection(db, "categoryRequests")),
+          getDocs(collection(db, "swapRequests")),
         ]);
         if (!active) return;
         setUsers(userSnapshot.docs
@@ -115,6 +125,9 @@ export default function AdminPage() {
           .sort((first, second) => createdTime(second) - createdTime(first)));
         setCategoryRequests(categoryRequestSnapshot.docs
           .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }) as AdminCategoryRequest)
+          .sort((first, second) => createdTime(second) - createdTime(first)));
+        setSwapRequests(swapRequestSnapshot.docs
+          .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }) as AdminSwapRequest)
           .sort((first, second) => createdTime(second) - createdTime(first)));
       } catch (loadError) {
         if (active) setError(getAuthErrorMessage(loadError));
@@ -147,6 +160,27 @@ export default function AdminPage() {
   const suspendedUsers = users.length - activeUsers;
   const activeListings = listings.filter((listing) => listing.status === "active").length;
   const removedListings = listings.filter((listing) => listing.status === "removed").length;
+  const pendingSwaps = swapRequests.filter((request) => request.status === "pending").length;
+  const acceptedSwaps = swapRequests.filter((request) => request.status === "accepted" || request.status === "completed").length;
+  const decidedSwaps = swapRequests.filter((request) => request.status === "accepted" || request.status === "completed" || request.status === "declined").length;
+  const acceptanceRate = decidedSwaps ? Math.round((acceptedSwaps / decidedSwaps) * 100) : 0;
+  const monthBuckets = useMemo(() => getRecentMonths(), []);
+  const monthlyAnalytics = monthBuckets.map((month) => ({
+    ...month,
+    newMembers: users.filter((member) => timestampMonthKey(member.createdAt) === month.key).length,
+    newListings: listings.filter((listing) => timestampMonthKey(listing.createdAt) === month.key).length,
+    newSwaps: swapRequests.filter((request) => timestampMonthKey(request.createdAt) === month.key).length,
+  }));
+  const topCategories = [...listings.reduce((counts, listing) => {
+    if (listing.status !== "active") return counts;
+    const category = listing.category?.trim() || "Uncategorized";
+    counts.set(category, (counts.get(category) ?? 0) + 1);
+    return counts;
+  }, new Map<string, number>()).entries()]
+    .sort((first, second) => second[1] - first[1])
+    .slice(0, 5);
+  const maxMonthlyActivity = Math.max(1, ...monthlyAnalytics.flatMap(({ newMembers, newListings, newSwaps }) => [newMembers, newListings, newSwaps]));
+  const maxCategoryActivity = Math.max(1, ...topCategories.map(([, count]) => count));
 
   async function setUserStatus(member: AdminUser, status: UserStatus) {
     if (!user || member.id === user.uid || member.role === "admin") return;
@@ -254,6 +288,39 @@ export default function AdminPage() {
         </section>
         {error && <p className="dashboard-message dashboard-error" role="alert">{error}</p>}
         {notice && <p className="dashboard-message dashboard-notice" role="status">{notice}</p>}
+
+        <section className="analytics-section" aria-labelledby="admin-analytics-heading">
+          <div className="analytics-heading"><div><p className="dashboard-eyebrow">PLATFORM ANALYTICS</p><h2 id="admin-analytics-heading">Community overview</h2></div><span>Monthly activity · last 6 months</span></div>
+          <div className="analytics-stats">
+            <article className="analytics-stat"><span>Total members</span><strong>{users.length}</strong><small>{activeUsers} active · {suspendedUsers} suspended</small></article>
+            <article className="analytics-stat"><span>Active skill listings</span><strong>{activeListings}</strong><small>{listings.length} listings total</small></article>
+            <article className="analytics-stat"><span>Swap requests</span><strong>{swapRequests.length}</strong><small>{pendingSwaps} awaiting a response</small></article>
+            <article className="analytics-stat"><span>Acceptance rate</span><strong>{acceptanceRate}%</strong><small>{decidedSwaps} decided requests</small></article>
+          </div>
+          <div className="analytics-panels">
+            <section className="analytics-panel" aria-label="Monthly platform activity">
+              <h3>Monthly activity</h3>
+              <div className="analytics-legend"><span><i className="analytics-key members" />Members</span><span><i className="analytics-key listings" />Listings</span><span><i className="analytics-key swaps" />Swaps</span></div>
+              <div className="analytics-chart" role="img" aria-label="Monthly counts of new members, skill listings, and swap requests">
+                {monthlyAnalytics.map((month) => <div className="analytics-month" key={month.key}>
+                  <div className="analytics-bars">
+                    <span className="analytics-bar members" style={{ height: `${(month.newMembers / maxMonthlyActivity) * 100}%` }} title={`${month.newMembers} new members`} />
+                    <span className="analytics-bar listings" style={{ height: `${(month.newListings / maxMonthlyActivity) * 100}%` }} title={`${month.newListings} listings`} />
+                    <span className="analytics-bar swaps" style={{ height: `${(month.newSwaps / maxMonthlyActivity) * 100}%` }} title={`${month.newSwaps} swap requests`} />
+                  </div>
+                  <span className="analytics-month-label">{month.label}</span>
+                </div>)}
+              </div>
+            </section>
+            <section className="analytics-panel" aria-label="Top skill categories">
+              <h3>Top skill categories</h3>
+              {topCategories.length ? <div className="analytics-category-list">{topCategories.map(([name, count]) => <div className="analytics-category-row" key={name}>
+                <div><span>{name}</span><strong>{count}</strong></div>
+                <span className="analytics-track"><span style={{ width: `${(count / maxCategoryActivity) * 100}%` }} /></span>
+              </div>)}</div> : <p className="analytics-empty">No active skill listings yet.</p>}
+            </section>
+          </div>
+        </section>
 
         <section className="admin-stats" aria-label="Moderation overview">
           <article className="admin-stat"><span>Active members</span><strong>{activeUsers}</strong></article>
