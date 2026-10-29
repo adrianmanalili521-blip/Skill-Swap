@@ -9,7 +9,7 @@ import { getAuthErrorMessage } from "@/lib/auth-errors";
 import { db } from "@/lib/firebase";
 import { useTheme } from "@/lib/theme-context";
 
-type AdminTab = "users" | "listings";
+type AdminTab = "users" | "listings" | "categories";
 type UserStatus = "active" | "suspended";
 type ListingStatus = "active" | "paused" | "removed";
 
@@ -33,6 +33,18 @@ interface AdminListing {
   createdAt?: { toMillis?: () => number };
 }
 
+type CategoryRequestStatus = "pending" | "approved" | "declined";
+
+interface AdminCategoryRequest {
+  id: string;
+  requesterId: string;
+  requesterName?: string;
+  name: string;
+  reason?: string;
+  status: CategoryRequestStatus;
+  createdAt?: { toMillis?: () => number };
+}
+
 function createdTime(value: { createdAt?: { toMillis?: () => number } }) {
   return value.createdAt?.toMillis?.() ?? 0;
 }
@@ -46,6 +58,7 @@ export default function AdminPage() {
   const [tab, setTab] = useState<AdminTab>("users");
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [listings, setListings] = useState<AdminListing[]>([]);
+  const [categoryRequests, setCategoryRequests] = useState<AdminCategoryRequest[]>([]);
   const [search, setSearch] = useState("");
   const [loadingData, setLoadingData] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -88,9 +101,10 @@ export default function AdminPage() {
       setLoadingData(true);
       setError(null);
       try {
-        const [userSnapshot, listingSnapshot] = await Promise.all([
+        const [userSnapshot, listingSnapshot, categoryRequestSnapshot] = await Promise.all([
           getDocs(collection(db, "users")),
           getDocs(collection(db, "skills")),
+          getDocs(collection(db, "categoryRequests")),
         ]);
         if (!active) return;
         setUsers(userSnapshot.docs
@@ -98,6 +112,9 @@ export default function AdminPage() {
           .sort((first, second) => createdTime(second) - createdTime(first)));
         setListings(listingSnapshot.docs
           .map((listingDoc) => ({ id: listingDoc.id, ...listingDoc.data() }) as AdminListing)
+          .sort((first, second) => createdTime(second) - createdTime(first)));
+        setCategoryRequests(categoryRequestSnapshot.docs
+          .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }) as AdminCategoryRequest)
           .sort((first, second) => createdTime(second) - createdTime(first)));
       } catch (loadError) {
         if (active) setError(getAuthErrorMessage(loadError));
@@ -120,6 +137,12 @@ export default function AdminPage() {
       listing.title, listing.description, listing.category, listing.ownerName, listing.ownerId,
     ].some((value) => value?.toLowerCase().includes(term)));
   }, [listings, search]);
+  const filteredCategoryRequests = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return categoryRequests.filter((request) => !term || [
+      request.name, request.reason, request.requesterName, request.requesterId, request.status,
+    ].some((value) => value?.toLowerCase().includes(term)));
+  }, [categoryRequests, search]);
   const activeUsers = users.filter((member) => member.status !== "suspended").length;
   const suspendedUsers = users.length - activeUsers;
   const activeListings = listings.filter((listing) => listing.status === "active").length;
@@ -153,6 +176,23 @@ export default function AdminPage() {
       await updateDoc(doc(db, "skills", listing.id), { status, updatedAt: serverTimestamp() });
       setListings((current) => current.map((item) => item.id === listing.id ? { ...item, status } : item));
       setNotice(`Listing ${status === "removed" ? "removed" : status === "paused" ? "paused" : "restored"}.`);
+    } catch (updateError) {
+      setError(getAuthErrorMessage(updateError));
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function setCategoryRequestStatus(request: AdminCategoryRequest, status: Exclude<CategoryRequestStatus, "pending">) {
+    setSavingId(request.id);
+    setError(null);
+    setNotice(null);
+    try {
+      await updateDoc(doc(db, "categoryRequests", request.id), { status, updatedAt: serverTimestamp() });
+      setCategoryRequests((current) => current.map((item) => item.id === request.id ? { ...item, status } : item));
+      setNotice(status === "approved"
+        ? `“${request.name}” is now available as a skill category.`
+        : `Category request for “${request.name}” declined.`);
     } catch (updateError) {
       setError(getAuthErrorMessage(updateError));
     } finally {
@@ -210,7 +250,7 @@ export default function AdminPage() {
         <section className="dashboard-welcome">
           <p className="dashboard-eyebrow">COMMUNITY OPERATIONS</p>
           <h1>Admin dashboard.</h1>
-          <p>Review member accounts and keep skill listings safe for the community.</p>
+          <p>Review member accounts, moderate listings, and manage category requests.</p>
         </section>
         {error && <p className="dashboard-message dashboard-error" role="alert">{error}</p>}
         {notice && <p className="dashboard-message dashboard-notice" role="status">{notice}</p>}
@@ -227,8 +267,9 @@ export default function AdminPage() {
             <div className="admin-tabs" role="tablist" aria-label="Moderation type">
               <button type="button" role="tab" aria-selected={tab === "users"} className={tab === "users" ? "admin-tab active" : "admin-tab"} onClick={() => { setTab("users"); setSearch(""); }}>Users <span>{users.length}</span></button>
               <button type="button" role="tab" aria-selected={tab === "listings"} className={tab === "listings" ? "admin-tab active" : "admin-tab"} onClick={() => { setTab("listings"); setSearch(""); }}>Skill listings <span>{listings.length}</span></button>
+              <button type="button" role="tab" aria-selected={tab === "categories"} className={tab === "categories" ? "admin-tab active" : "admin-tab"} onClick={() => { setTab("categories"); setSearch(""); }}>Category requests <span>{categoryRequests.filter((request) => request.status === "pending").length}</span></button>
             </div>
-            <label className="admin-search"><span className="visually-hidden">Search moderation records</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tab === "users" ? "Search name, email, or ID" : "Search listing or owner"} /></label>
+            <label className="admin-search"><span className="visually-hidden">Search moderation records</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tab === "users" ? "Search name, email, or ID" : tab === "listings" ? "Search listing or owner" : "Search category requests"} /></label>
           </div>
 
           {loadingData ? <div className="empty-state" role="status">Loading moderation records...</div> : tab === "users" ? (
@@ -243,7 +284,7 @@ export default function AdminPage() {
                 {isProtectedAccount ? <span className="admin-protected-label">{member.id === user.uid ? "Your account" : "Administrator"}</span> : <button className={status === "suspended" ? "secondary-action" : "secondary-action admin-danger-action"} type="button" disabled={savingId === member.id} onClick={() => void setUserStatus(member, status === "suspended" ? "active" : "suspended")}>{savingId === member.id ? "Saving..." : status === "suspended" ? "Reactivate" : "Suspend"}</button>}
               </article>;
             })}</div> : <div className="empty-state"><strong>No members found.</strong><span>Try a different search.</span></div>
-          ) : filteredListings.length ? (
+          ) : tab === "listings" && filteredListings.length ? (
             <div className="admin-record-list">{filteredListings.map((listing) => {
               const status = listing.status ?? "active";
               return <article className="admin-record admin-listing-record" key={listing.id}>
@@ -260,7 +301,21 @@ export default function AdminPage() {
                 </div>
               </article>;
             })}</div>
-          ) : <div className="empty-state"><strong>No listings found.</strong><span>Try a different search.</span></div>}
+          ) : tab === "categories" && filteredCategoryRequests.length ? (
+            <div className="admin-record-list">{filteredCategoryRequests.map((request) => (
+              <article className="admin-record admin-listing-record" key={request.id}>
+                <div className="admin-record-copy">
+                  <div className="admin-record-title"><h2>{request.name}</h2><span className={`admin-status ${request.status}`}>{request.status}</span></div>
+                  <p>Requested by {request.requesterName || request.requesterId} <span aria-hidden="true">·</span> <code>{request.requesterId}</code></p>
+                  {request.reason && <p className="admin-listing-description">{request.reason}</p>}
+                </div>
+                {request.status === "pending" && <div className="admin-record-actions">
+                  <button className="secondary-action admin-danger-action" type="button" disabled={savingId === request.id} onClick={() => void setCategoryRequestStatus(request, "declined")}>{savingId === request.id ? "Saving..." : "Decline"}</button>
+                  <button className="primary-action" type="button" disabled={savingId === request.id} onClick={() => void setCategoryRequestStatus(request, "approved")}>{savingId === request.id ? "Saving..." : "Approve"}</button>
+                </div>}
+              </article>
+            ))}</div>
+          ) : <div className="empty-state"><strong>{tab === "listings" ? "No listings found." : tab === "categories" ? "No category requests found." : "No members found."}</strong><span>Try a different search.</span></div>}
         </section>
       </div>
     </main>
