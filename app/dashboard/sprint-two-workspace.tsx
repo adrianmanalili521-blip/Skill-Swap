@@ -22,8 +22,9 @@ import { useAuth } from "@/lib/auth-context";
 import { getAuthErrorMessage } from "@/lib/auth-errors";
 import { db } from "@/lib/firebase";
 import { useTheme } from "@/lib/theme-context";
+import { getRecentMonths, timestampMonthKey } from "@/lib/analytics";
 
-type View = "discover" | "listings" | "requests" | "profile";
+type View = "discover" | "listings" | "requests" | "analytics" | "profile";
 type SkillLevel = "beginner" | "intermediate" | "advanced";
 type SwapRequestStatus = "pending" | "accepted" | "declined" | "cancelled" | "completed";
 
@@ -239,7 +240,7 @@ export default function SprintTwoWorkspace() {
   }, [user, userRole]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !userRole || userRole === "admin") return;
     const currentUserId = user.uid;
     let active = true;
     let incomingLoaded = false;
@@ -377,6 +378,23 @@ export default function SprintTwoWorkspace() {
   const notifications = notificationSnapshot.userId === user?.uid ? notificationSnapshot.notifications : [];
   const notificationError = notificationSnapshot.userId === user?.uid ? notificationSnapshot.error : null;
   const unreadNotificationCount = notifications.filter((notification) => !notification.read).length;
+  const personalSwaps = [...incomingRequests, ...outgoingRequests];
+  const acceptedSwaps = personalSwaps.filter((request) => request.status === "accepted" || request.status === "completed").length;
+  const decidedSwaps = personalSwaps.filter((request) => request.status === "accepted" || request.status === "completed" || request.status === "declined").length;
+  const acceptanceRate = decidedSwaps ? Math.round((acceptedSwaps / decidedSwaps) * 100) : 0;
+  const personalMonthlyActivity = getRecentMonths().map((month) => ({
+    ...month,
+    newListings: myListings.filter((listing) => timestampMonthKey(listing.createdAt) === month.key).length,
+    swapRequests: personalSwaps.filter((request) => timestampMonthKey(request.createdAt) === month.key).length,
+  }));
+  const personalCategories = [...myListings.filter((listing) => listing.status === "active").reduce((counts, listing) => {
+    counts.set(listing.category, (counts.get(listing.category) ?? 0) + 1);
+    return counts;
+  }, new Map<string, number>()).entries()]
+    .sort((first, second) => second[1] - first[1])
+    .slice(0, 5);
+  const maxPersonalActivity = Math.max(1, ...personalMonthlyActivity.flatMap(({ newListings, swapRequests }) => [newListings, swapRequests]));
+  const maxPersonalCategory = Math.max(1, ...personalCategories.map(([, count]) => count));
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -615,14 +633,14 @@ export default function SprintTwoWorkspace() {
   }
   const displayName = profile?.displayName || user.displayName || "there";
   const isAdmin = profile?.role === "admin";
-  const navigationItems: View[] = isAdmin ? ["discover", "profile"] : ["discover", "listings", "requests", "profile"];
+  const navigationItems: View[] = isAdmin ? ["discover", "profile"] : ["discover", "listings", "requests", "analytics", "profile"];
 
   return (
     <main className="dashboard-shell" data-theme={theme}>
       <header className="dashboard-header">
         <Link className="dashboard-brand" href="/dashboard"><span className="dashboard-brand-mark" aria-hidden="true">s</span><span>skill swap</span></Link>
         <nav className="dashboard-nav" aria-label="Main navigation">
-          {navigationItems.map((item) => <button key={item} className={view === item ? "dashboard-nav-item active" : "dashboard-nav-item"} type="button" onClick={() => { setView(item); setNotice(null); }}>{item === "listings" ? "My listings" : item === "requests" ? "Swap requests" : item === "discover" ? "Discover" : "Profile"}</button>)}
+          {navigationItems.map((item) => <button key={item} className={view === item ? "dashboard-nav-item active" : "dashboard-nav-item"} type="button" onClick={() => { setView(item); setNotice(null); }}>{item === "listings" ? "My listings" : item === "requests" ? "Swap requests" : item === "analytics" ? "Analytics" : item === "discover" ? "Discover" : "Profile"}</button>)}
           {isAdmin && <Link className="dashboard-nav-item admin-nav-link" href="/admin">Admin panel</Link>}
         </nav>
         <div className="dashboard-header-actions">
@@ -642,7 +660,7 @@ export default function SprintTwoWorkspace() {
         </div>
       </header>
       <div className="dashboard-main">
-        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? isAdmin ? "Explore community skills." : "Find your next exchange." : view === "listings" ? "Share what you know." : view === "requests" ? "Make an exchange happen." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? isAdmin ? "Browse skills shared by your community." : "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : view === "requests" ? "Track the requests you send and the offers you receive." : "A good exchange starts with a little context about you."}</p></section>
+        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? isAdmin ? "Explore community skills." : "Find your next exchange." : view === "listings" ? "Share what you know." : view === "requests" ? "Make an exchange happen." : view === "analytics" ? "Your activity at a glance." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? isAdmin ? "Browse skills shared by your community." : "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : view === "requests" ? "Track the requests you send and the offers you receive." : view === "analytics" ? "Review your listings, swap requests, and activity over the last six months." : "A good exchange starts with a little context about you."}</p></section>
         {error && <p className="dashboard-message dashboard-error" role="alert">{error}</p>}{notice && <p className="dashboard-message dashboard-notice" role="status">{notice}</p>}
 
         {view === "discover" && <section aria-label="Discover skills">
@@ -671,6 +689,38 @@ export default function SprintTwoWorkspace() {
               {outgoingRequests.length ? <div className="request-list">{outgoingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST SENT</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}</article>)}</div> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
             </section>
           </>}
+        </section>}
+
+        {view === "analytics" && !isAdmin && <section className="personal-analytics" aria-labelledby="personal-analytics-heading">
+          <div className="analytics-heading"><div><p className="dashboard-eyebrow">YOUR ANALYTICS</p><h2 id="personal-analytics-heading">Your skill swap activity</h2></div><span>Monthly activity · last 6 months</span></div>
+          <div className="analytics-stats">
+            <article className="analytics-stat"><span>Active listings</span><strong>{myListings.filter((listing) => listing.status === "active").length}</strong><small>{myListings.length} listings total</small></article>
+            <article className="analytics-stat"><span>Requests received</span><strong>{incomingRequests.length}</strong><small>{incomingRequests.filter((request) => request.status === "pending").length} awaiting your response</small></article>
+            <article className="analytics-stat"><span>Requests sent</span><strong>{outgoingRequests.length}</strong><small>{outgoingRequests.filter((request) => request.status === "pending").length} awaiting a response</small></article>
+            <article className="analytics-stat"><span>Acceptance rate</span><strong>{acceptanceRate}%</strong><small>{acceptedSwaps} accepted of {decidedSwaps} decided</small></article>
+          </div>
+          {loadingRequests ? <div className="empty-state" role="status">Loading your swap activity...</div> : requestLoadError ? <div className="empty-state" role="alert"><strong>Swap analytics are unavailable.</strong><span>{requestLoadError}</span></div> : <div className="analytics-panels">
+            <section className="analytics-panel" aria-label="Your monthly activity">
+              <h3>Monthly activity</h3>
+              <div className="analytics-legend"><span><i className="analytics-key listings" />Listings</span><span><i className="analytics-key swaps" />Swap requests</span></div>
+              <div className="analytics-chart" role="img" aria-label="Your monthly skill listings and swap requests">
+                {personalMonthlyActivity.map((month) => <div className="analytics-month" key={month.key}>
+                  <div className="analytics-bars">
+                    <span className="analytics-bar listings" style={{ height: `${(month.newListings / maxPersonalActivity) * 100}%` }} title={`${month.newListings} listings`} />
+                    <span className="analytics-bar swaps" style={{ height: `${(month.swapRequests / maxPersonalActivity) * 100}%` }} title={`${month.swapRequests} swap requests`} />
+                  </div>
+                  <span className="analytics-month-label">{month.label}</span>
+                </div>)}
+              </div>
+            </section>
+            <section className="analytics-panel" aria-label="Your active listing categories">
+              <h3>Active listing categories</h3>
+              {personalCategories.length ? <div className="analytics-category-list">{personalCategories.map(([name, count]) => <div className="analytics-category-row" key={name}>
+                <div><span>{name}</span><strong>{count}</strong></div>
+                <span className="analytics-track"><span style={{ width: `${(count / maxPersonalCategory) * 100}%` }} /></span>
+              </div>)}</div> : <p className="analytics-empty">Publish an active skill listing to see your category breakdown.</p>}
+            </section>
+          </div>}
         </section>}
 
         {view === "listings" && !isAdmin && <section aria-label="Manage your skill listings"><div className="section-toolbar"><div><h2>Your listings</h2><p>{myListings.length} total · {myListings.filter((item) => item.status === "active").length} active</p></div>{!showEditor && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); }}>＋ New listing</button>}</div>

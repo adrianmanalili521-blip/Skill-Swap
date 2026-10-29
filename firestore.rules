@@ -122,7 +122,8 @@ service cloud.firestore {
     // Only the two participants (sender/receiver) can read a request.
     // Senders may cancel pending requests; recipients may accept or decline.
     match /swapRequests/{requestId} {
-      allow read: if isActiveUser() && !isAdmin() && isParticipant(resource.data);
+      allow read: if isAdmin()
+                  || (isActiveUser() && !isAdmin() && isParticipant(resource.data));
 
       allow create: if isActiveUser()
                     && !isAdmin()

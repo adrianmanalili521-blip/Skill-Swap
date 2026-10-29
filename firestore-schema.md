@@ -75,6 +75,8 @@ Auto-ID document. Represents one user requesting a swap tied to a specific skill
 
 The dashboard creates requests from active skill listings. A request starts as `pending`; only the recipient can change it to `accepted` or `declined`, and only the sender can change it to `cancelled`. To accept, the recipient must select an active skill listing owned by the requester; its ID is stored in `offeredSkillId`. Status changes update `updatedAt`; participant IDs and the requested skill cannot be changed after creation.
 
+Admins can read swap request records for platform analytics; only participants can create or change requests. User analytics are derived from that member's own listings and incoming/outgoing requests. The current dashboards aggregate client-readable records and are intended for the current MVP data volume.
+
 ---
 
 ## `notifications/{notificationId}`
