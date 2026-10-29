@@ -1017,6 +1017,9 @@ button:disabled {
 .dashboard-shell .dashboard-eyebrow { color: #758a76; }
 .dashboard-welcome-test { margin: 8px 0 0; color: var(--text-muted); font-size: 11px; font-weight: 500; }
 .discover-tools { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(170px, 210px) auto; gap: 11px; margin: 0 0 35px; padding: 13px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
+.category-request-entry { display: flex; justify-content: flex-end; margin: -25px 0 20px; }
+.category-request-form { display: grid; gap: 13px; }
+.category-request-form > h2 { margin: 0; color: var(--text); font-family: Georgia, "Times New Roman", serif; font-size: 20px; font-weight: 400; }
 .search-field { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 0 12px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface); }
 .search-icon { color: #738374; font-size: 23px; line-height: 1; }
 .search-field input { width: 100%; min-width: 0; height: 40px; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 12px; }
@@ -1264,8 +1267,8 @@ button:disabled {
 .admin-record-copy > p { margin: 6px 0 0; color: var(--text-muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .admin-record-copy code { color: var(--text-muted); font-size: 9px; }
 .admin-status { padding: 4px 8px; border-radius: 20px; background: var(--surface-muted); color: var(--text-muted); font-size: 9px; text-transform: capitalize; }
-.admin-status.active { background: #e8f3e8; color: #396346; }
-.admin-status.suspended,.admin-status.removed { background: #f8e9e5; color: #8f493b; }
+.admin-status.active,.admin-status.approved { background: #e8f3e8; color: #396346; }
+.admin-status.suspended,.admin-status.removed,.admin-status.declined { background: #f8e9e5; color: #8f493b; }
 .admin-status.paused { background: #fff3df; color: #896229; }
 .admin-protected-label { flex: 0 0 auto; color: var(--text-muted); font-size: 10px; }
 .admin-danger-action { border-color: #e5c4ba; color: #9c4939; }
@@ -1275,8 +1278,8 @@ button:disabled {
 .admin-record-actions { display: flex; flex: 0 0 auto; gap: 8px; }
 .admin-back-link { display: flex; align-items: center; color: var(--text-muted); font-size: 11px; text-decoration: none; }
 .dashboard-shell[data-theme="dark"] .admin-tab.active,.dashboard-shell[data-theme="dark"] .admin-search input { border-color: var(--border); background: var(--surface-muted); color: var(--text); }
-.dashboard-shell[data-theme="dark"] .admin-status.active { background: #30483a; color: #b7d8bd; }
-.dashboard-shell[data-theme="dark"] .admin-status.suspended,.dashboard-shell[data-theme="dark"] .admin-status.removed { background: #503631; color: #efb4a7; }
+.dashboard-shell[data-theme="dark"] .admin-status.active,.dashboard-shell[data-theme="dark"] .admin-status.approved { background: #30483a; color: #b7d8bd; }
+.dashboard-shell[data-theme="dark"] .admin-status.suspended,.dashboard-shell[data-theme="dark"] .admin-status.removed,.dashboard-shell[data-theme="dark"] .admin-status.declined { background: #503631; color: #efb4a7; }
 .dashboard-shell[data-theme="dark"] .admin-status.paused { background: #51432d; color: #f0cf91; }
 .dashboard-shell[data-theme="dark"] .admin-danger-action { border-color: #765047; color: #efb4a7; }
 .dashboard-shell[data-theme="dark"] .admin-danger-action:hover:not(:disabled) { background: #503631; }
