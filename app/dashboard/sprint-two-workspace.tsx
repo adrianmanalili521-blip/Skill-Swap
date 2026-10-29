@@ -231,7 +231,7 @@ export default function SprintTwoWorkspace() {
         });
       },
     );
-  }, [user]);
+  }, [user, userRole]);
 
   useEffect(() => {
     if (!user) return;
@@ -537,6 +537,9 @@ export default function SprintTwoWorkspace() {
       setError(getAuthErrorMessage(requestError));
     } finally {
       setSendingCategoryRequest(false);
+    }
+  }
+
   async function openNotification(notification: AppNotification) {
     setError(null);
     try {
@@ -617,8 +620,7 @@ export default function SprintTwoWorkspace() {
         {view === "discover" && <section aria-label="Discover skills">
           <div className="discover-tools"><label className="search-field"><span className="search-icon" aria-hidden="true">⌕</span><span className="visually-hidden">Search skills, tags, or people</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search skills, tags, or people" /></label><label className="category-filter"><span className="visually-hidden">Filter by category</span><select value={category} onChange={(event) => setCategory(event.target.value)}><option>All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></label>{!isAdmin && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); setView("listings"); }}><span aria-hidden="true">＋</span> Offer a skill</button>}</div>
           {!isAdmin && <div className="category-request-entry"><button className="text-action" type="button" onClick={() => setShowCategoryRequestForm((shown) => !shown)}>{showCategoryRequestForm ? "Close category request" : "Request a category"}</button></div>}
-          {!isAdmin && showCategoryRequestForm && <form className="skill-editor category-request-form" onSubmit={(event) => void 
-              Request(event)}><h2>Suggest a category</h2><label className="dashboard-field"><span>Category name</span><input value={categoryRequestName} onChange={(event) => setCategoryRequestName(event.target.value)} minLength={2} maxLength={40} required placeholder="e.g. Gardening" /></label><label className="dashboard-field"><span>Why should we add it? <small>Optional</small></span><textarea value={categoryRequestReason} onChange={(event) => setCategoryRequestReason(event.target.value)} maxLength={500} rows={3} placeholder="Tell the admin what skills this category would cover." /></label><div className="editor-actions"><button className="primary-action" type="submit" disabled={sendingCategoryRequest}>{sendingCategoryRequest ? "Sending..." : "Send category request"}</button></div></form>}
+          {!isAdmin && showCategoryRequestForm && <form className="skill-editor category-request-form" onSubmit={(event) => void sendCategoryRequest(event)}><h2>Suggest a category</h2><label className="dashboard-field"><span>Category name</span><input value={categoryRequestName} onChange={(event) => setCategoryRequestName(event.target.value)} minLength={2} maxLength={40} required placeholder="e.g. Gardening" /></label><label className="dashboard-field"><span>Why should we add it? <small>Optional</small></span><textarea value={categoryRequestReason} onChange={(event) => setCategoryRequestReason(event.target.value)} maxLength={500} rows={3} placeholder="Tell the admin what skills this category would cover." /></label><div className="editor-actions"><button className="primary-action" type="submit" disabled={sendingCategoryRequest}>{sendingCategoryRequest ? "Sending..." : "Send category request"}</button></div></form>}
           <div className="results-heading"><h2>Community skills</h2><span>{loadingData ? "Loading..." : `${discoveredListings.length} ${discoveredListings.length === 1 ? "listing" : "listings"}`}</span></div>
           {loadingData ? <div className="empty-state">Loading skills...</div> : discoveredListings.length ? <div className="skill-grid">{discoveredListings.map((listing, index) => {
             const previousRequest = !isAdmin && outgoingRequests.find((request) => request.skillId === listing.id && (request.status === "pending" || request.status === "accepted"));
