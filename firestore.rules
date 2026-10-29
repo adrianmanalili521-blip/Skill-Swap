@@ -210,10 +210,10 @@ service cloud.firestore {
                     && request.resource.data.requestId is string
                     && request.resource.data.read == false
                     && request.resource.data.createdAt is timestamp
-                    && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
                     && (
                       (
                         request.resource.data.kind == 'swap_request'
+                        && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
                           == request.auth.uid
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
@@ -223,6 +223,7 @@ service cloud.firestore {
                       )
                       || (
                         request.resource.data.kind == 'swap_accepted'
+                        && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
                           == request.auth.uid
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
@@ -232,12 +233,26 @@ service cloud.firestore {
                       )
                       || (
                         request.resource.data.kind == 'swap_declined'
+                        && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
                           == request.auth.uid
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
                           == request.resource.data.recipientId
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.status
                           == 'declined'
+                      )
+                      || (
+                        request.resource.data.kind == 'category_request'
+                        && existsAfter(/databases/$(database)/documents/categoryRequests/$(request.resource.data.requestId))
+                        && getAfter(/databases/$(database)/documents/categoryRequests/$(request.resource.data.requestId)).data.requesterId
+                          == request.auth.uid
+                        && getAfter(/databases/$(database)/documents/categoryRequests/$(request.resource.data.requestId)).data.status
+                          == 'pending'
+                        && exists(/databases/$(database)/documents/users/$(request.resource.data.recipientId))
+                        && get(/databases/$(database)/documents/users/$(request.resource.data.recipientId)).data.role
+                          == 'admin'
+                        && get(/databases/$(database)/documents/users/$(request.resource.data.recipientId)).data.get('status', 'active')
+                          == 'active'
                       )
                     );
 
