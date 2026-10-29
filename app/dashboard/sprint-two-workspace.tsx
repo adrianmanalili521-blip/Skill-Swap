@@ -224,10 +224,15 @@ export default function SprintTwoWorkspace() {
         });
       },
       (listenerError) => {
+        const permissionDenied = listenerError instanceof Error
+          && "code" in listenerError
+          && listenerError.code === "permission-denied";
         setNotificationSnapshot({
           userId: user.uid,
           notifications: [],
-          error: `Unable to load notifications: ${getAuthErrorMessage(listenerError)}`,
+          error: permissionDenied
+            ? "Firestore denied notification access. Deploy the latest firestore.rules, then reload."
+            : `Unable to load notifications: ${getAuthErrorMessage(listenerError)}`,
         });
       },
     );
