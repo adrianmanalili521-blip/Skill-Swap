@@ -19,7 +19,7 @@ const MESSAGES: Record<string, string> = {
   "auth/network-request-failed": "Network error. Check your connection and try again.",
   "auth/operation-not-allowed": "This sign-in method is not enabled in Firebase Authentication settings.",
   "auth/unauthorized-domain": "This site is not authorized for Firebase sign-in. Add its hostname under Firebase Authentication settings.",
-  "permission-denied": "Firebase blocked access to the user profile in Firestore. Check Firestore rules; the Auth account may already exist, so try signing in.",
+  "permission-denied": "Firestore denied this operation. Check that the signed-in user has access and the latest Firestore rules are deployed to the Firebase project used by this app.",
 };
 
 export function getAuthErrorMessage(err: unknown): string {

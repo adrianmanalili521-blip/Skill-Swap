@@ -130,7 +130,15 @@ export default function AdminPage() {
           .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }) as AdminSwapRequest)
           .sort((first, second) => createdTime(second) - createdTime(first)));
       } catch (loadError) {
-        if (active) setError(getAuthErrorMessage(loadError));
+        if (active) {
+          const permissionDenied = typeof loadError === "object"
+            && loadError !== null
+            && "code" in loadError
+            && loadError.code === "permission-denied";
+          setError(permissionDenied
+            ? "Firestore denied access to admin analytics or moderation data. Deploy the latest firestore.rules to the Firebase project used by this app, then reload."
+            : getAuthErrorMessage(loadError));
+        }
       } finally {
         if (active) setLoadingData(false);
       }
