@@ -109,6 +109,8 @@ export default function SprintTwoWorkspace() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [listings, setListings] = useState<SkillListing[]>([]);
   const [approvedCategories, setApprovedCategories] = useState<string[]>([]);
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [inactiveCategories, setInactiveCategories] = useState<string[]>([]);
   const [requestSnapshot, setRequestSnapshot] = useState<SwapRequestSnapshotState>({
     userId: null,
     incoming: [],
@@ -181,6 +183,24 @@ export default function SprintTwoWorkspace() {
     }
     void loadDashboard();
     return () => { active = false; };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(
+      collection(db, "categories"),
+      (snapshot) => {
+        setCustomCategories(snapshot.docs
+          .filter((categoryDoc) => categoryDoc.data().status === "active")
+          .map((categoryDoc) => String(categoryDoc.data().name ?? "").trim())
+          .filter(Boolean));
+        setInactiveCategories(snapshot.docs
+          .filter((categoryDoc) => categoryDoc.data().status === "inactive")
+          .map((categoryDoc) => String(categoryDoc.data().name ?? "").trim())
+          .filter(Boolean));
+      },
+      (listenerError) => setError(`Unable to load custom categories: ${getAuthErrorMessage(listenerError)}`),
+    );
   }, [user]);
 
   useEffect(() => {
@@ -351,7 +371,9 @@ export default function SprintTwoWorkspace() {
   const categories = useMemo(
     () => {
       const uniqueCategories = new Map<string, string>();
-      [...defaultCategories, ...approvedCategories].forEach((name) => {
+      [...defaultCategories, ...approvedCategories, ...customCategories]
+        .filter((name) => !inactiveCategories.some((inactiveName) => inactiveName.toLowerCase() === name.trim().toLowerCase()))
+        .forEach((name) => {
         const normalizedName = name.trim().toLowerCase();
         if (normalizedName && !uniqueCategories.has(normalizedName)) {
           uniqueCategories.set(normalizedName, name.trim());
@@ -359,7 +381,7 @@ export default function SprintTwoWorkspace() {
       });
       return [...uniqueCategories.values()];
     },
-    [approvedCategories],
+    [approvedCategories, customCategories, inactiveCategories],
   );
   const discoveredListings = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -672,6 +694,7 @@ export default function SprintTwoWorkspace() {
             const previousRequest = !isAdmin && outgoingRequests.find((request) => request.skillId === listing.id && (request.status === "pending" || request.status === "accepted"));
             const requestFormOpen = requestFormFor === listing.id;
             return <article className="skill-card" key={listing.id} style={{ animationDelay: `${Math.min(index * 45, 270)}ms` }}><div className="skill-card-topline"><span className="skill-category">{listing.category}</span><span className="skill-level">{listing.level}</span></div><h3>{listing.title}</h3><p className="skill-description">{listing.description || "This member is happy to share what they know."}</p>{listing.tags.length > 0 && <div className="skill-tags">{listing.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="skill-card-footer"><Link href={`/profile/${listing.ownerId}`} className="listing-owner"><span className="mini-avatar">{listing.ownerName.slice(0, 1).toUpperCase()}</span><span>{listing.ownerName}</span></Link><span className="listing-status">Open to swap</span></div>
+              {!isAdmin && listing.ownerId !== user?.uid && <Link className="admin-text-button listing-report-link" href={`/report/listing/${encodeURIComponent(listing.id)}`}>Report listing</Link>}
               {!isAdmin && (previousRequest ? <p className="request-existing-status">Request {previousRequest.status}</p> : requestFormOpen ? <form className="swap-request-form" onSubmit={(event) => void sendSwapRequest(listing, event)}><label className="dashboard-field"><span>Message <small>Optional</small></span><textarea value={requestMessage} onChange={(event) => setRequestMessage(event.target.value)} maxLength={500} rows={3} placeholder="What would you like to learn?" /></label><div className="editor-actions"><button className="secondary-action" type="button" onClick={() => { setRequestFormFor(null); setRequestMessage(""); }}>Cancel</button><button className="primary-action" type="submit" disabled={sendingRequestFor !== null}>{sendingRequestFor === listing.id ? "Sending..." : "Send request"}</button></div></form> : <button className="secondary-action request-start" type="button" disabled={loadingRequests} onClick={() => { setRequestFormFor(listing.id); setRequestMessage(""); }}>{loadingRequests ? "Loading requests..." : outgoingRequests.some((request) => request.skillId === listing.id && request.status === "declined") ? "Request again" : "Request a swap"}</button>)}
             </article>;
           })}</div> : <div className="empty-state"><strong>No matching skills yet.</strong><span>{isAdmin ? "Try another search or category filter." : "Try another search, or be the first to share a skill."}</span></div>}

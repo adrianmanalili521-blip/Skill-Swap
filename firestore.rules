@@ -54,7 +54,14 @@ service cloud.firestore {
                         request.resource.data.status == 'active'
                         || (resource.data.role != 'admin' && userId != request.auth.uid)
                       )
-                    );
+                      ) || (
+                        isAdmin()
+                        && userId != request.auth.uid
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'updatedAt'])
+                        && request.resource.data.role in ['user', 'admin']
+                        && request.resource.data.get('status', 'active') == resource.data.get('status', 'active')
+                        && request.resource.data.updatedAt is timestamp
+                      );
       allow delete: if isAdmin();
     }
 
@@ -73,8 +80,11 @@ service cloud.firestore {
                && request.resource.data.ownerId == resource.data.ownerId)
             || (
               isAdmin()
-              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'category'])
               && request.resource.data.status in ['active', 'paused', 'removed']
+              && request.resource.data.category is string
+              && request.resource.data.category.size() >= 2
+              && request.resource.data.category.size() <= 40
               && request.resource.data.updatedAt is timestamp
             );
       allow delete: if (isOwner(resource.data.ownerId) && isActiveUser() && !isAdmin()) || isAdmin();
@@ -116,6 +126,111 @@ service cloud.firestore {
                     && request.resource.data.updatedAt is timestamp;
 
       allow delete: if false;
+    }
+
+    // ---------- categories/{categoryId} ----------
+    // Custom categories supplement the built-in categories in the member app.
+    match /categories/{categoryId} {
+      allow read: if isAdmin() || isActiveUser();
+      allow create: if isAdmin()
+                    && request.resource.data.keys().hasOnly([
+                      'name', 'description', 'status', 'createdAt', 'updatedAt'
+                    ])
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() >= 2
+                    && request.resource.data.name.size() <= 40
+                    && request.resource.data.description is string
+                    && request.resource.data.description.size() <= 300
+                    && request.resource.data.status == 'active'
+                    && request.resource.data.createdAt is timestamp
+                    && request.resource.data.updatedAt is timestamp;
+      allow update: if isAdmin()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['name', 'description', 'status', 'updatedAt'])
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() >= 2
+                    && request.resource.data.name.size() <= 40
+                    && request.resource.data.description is string
+                    && request.resource.data.description.size() <= 300
+                    && request.resource.data.status in ['active', 'inactive']
+                    && request.resource.data.updatedAt is timestamp;
+      allow delete: if isAdmin();
+    }
+
+    // ---------- reports/{reportId} ----------
+    // Members can submit a report about another account or listing. Only admins
+    // can inspect reports or write moderation decisions.
+    match /reports/{reportId} {
+      allow read: if isAdmin();
+      allow create: if isActiveUser()
+                    && !isAdmin()
+                    && request.resource.data.keys().hasOnly([
+                      'reporterId', 'reporterName', 'targetType', 'targetId',
+                      'reason', 'status', 'createdAt', 'updatedAt'
+                    ])
+                    && request.resource.data.reporterId == request.auth.uid
+                    && request.resource.data.reporterName is string
+                    && request.resource.data.reporterName.size() <= 100
+                    && request.resource.data.reason is string
+                    && request.resource.data.reason.size() >= 10
+                    && request.resource.data.reason.size() <= 1000
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.createdAt is timestamp
+                    && request.resource.data.updatedAt is timestamp
+                    && (
+                      (
+                        request.resource.data.targetType == 'user'
+                        && request.resource.data.targetId is string
+                        && request.resource.data.targetId != request.auth.uid
+                        && exists(/databases/$(database)/documents/users/$(request.resource.data.targetId))
+                      )
+                      || (
+                        request.resource.data.targetType == 'listing'
+                        && request.resource.data.targetId is string
+                        && exists(/databases/$(database)/documents/skills/$(request.resource.data.targetId))
+                        && get(/databases/$(database)/documents/skills/$(request.resource.data.targetId)).data.ownerId
+                          != request.auth.uid
+                      )
+                    );
+      allow update: if isAdmin()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                      'status', 'resolutionNote', 'moderatorId', 'moderatorName', 'updatedAt'
+                    ])
+                    && request.resource.data.status in ['pending', 'under_review', 'resolved', 'dismissed']
+                    && request.resource.data.resolutionNote is string
+                    && request.resource.data.resolutionNote.size() <= 500
+                    && request.resource.data.moderatorId == request.auth.uid
+                    && request.resource.data.moderatorName is string
+                    && request.resource.data.moderatorName.size() <= 100
+                    && request.resource.data.updatedAt is timestamp;
+      allow delete: if false;
+    }
+
+    // ---------- adminActivityLogs/{logId} ----------
+    // Append-only administrator audit records; writes are atomic with the
+    // corresponding administrative operation in the web client.
+    match /adminActivityLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+                    && request.resource.data.keys().hasOnly([
+                      'actorId', 'actorName', 'action', 'entityType', 'entityId',
+                      'summary', 'before', 'after', 'createdAt'
+                    ])
+                    && request.resource.data.actorId == request.auth.uid
+                    && request.resource.data.actorName is string
+                    && request.resource.data.actorName.size() <= 100
+                    && request.resource.data.action is string
+                    && request.resource.data.action.size() <= 50
+                    && request.resource.data.entityType is string
+                    && request.resource.data.entityType.size() <= 40
+                    && request.resource.data.entityId is string
+                    && request.resource.data.entityId.size() <= 150
+                    && request.resource.data.summary is string
+                    && request.resource.data.summary.size() <= 300
+                    && (request.resource.data.before is map || request.resource.data.before == null)
+                    && (request.resource.data.after is map || request.resource.data.after == null)
+                    && request.resource.data.createdAt is timestamp;
+      allow update, delete: if false;
     }
 
     // ---------- swapRequests/{requestId} ----------
@@ -188,6 +303,12 @@ service cloud.firestore {
                           && request.resource.data.offeredSkillId == resource.data.offeredSkillId
                         )
                       )
+                    ) || (
+                      isAdmin()
+                      && resource.data.status == 'pending'
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+                      && request.resource.data.status == 'cancelled'
+                      && request.resource.data.updatedAt is timestamp
                     );
 
       allow delete: if isActiveUser() && !isAdmin() && isParticipant(resource.data);

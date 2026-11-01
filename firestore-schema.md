@@ -9,6 +9,9 @@ swapRequests/{requestId}
 categoryRequests/{requestId}
 reviews/{reviewId}
 notifications/{notificationId}
+categories/{categoryId}
+reports/{reportId}
+adminActivityLogs/{logId}
 ```
 
 ---
@@ -77,6 +80,8 @@ The dashboard creates requests from active skill listings. A request starts as `
 
 Admins can read swap request records for platform analytics; only participants can create or change requests. User analytics are derived from that member's own listings and incoming/outgoing requests. The current dashboards aggregate client-readable records and are intended for the current MVP data volume.
 
+Administrators may cancel pending requests for safety or moderation. They cannot accept, decline, or mark a swap complete on behalf of participants. Every admin cancellation is written to `adminActivityLogs` in the same Firestore batch.
+
 ---
 
 ## `notifications/{notificationId}`
@@ -110,6 +115,64 @@ Auto-ID document. A member's request to add a skill category.
 
 Members can read their own requests and approved categories. Approving a request adds its category to discovery filters and listing forms.
 
+An approved request also creates a matching `categories/{categoryId}` record so administrators can describe, deactivate, or safely remove custom categories. Existing approved requests remain the historical source for already-approved categories; when such a category is deactivated, the category record suppresses it from member filters without deleting the request history.
+
+The admin Categories page offers a batched, audited import action for approved requests created before the `categories` collection existed.
+
+---
+
+## `categories/{categoryId}` (admin-managed custom categories)
+
+The document ID is a normalized lowercase category name (for example `art-history`). Built-in member categories remain in the application and are not duplicated in this collection.
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | 2–40 characters |
+| `description` | string | optional, up to 300 characters |
+| `status` | `"active"` \| `"inactive"` | inactive categories are hidden from member category filters |
+| `createdAt` | timestamp | |
+| `updatedAt` | timestamp | |
+
+Admins can create, edit, activate, deactivate, and remove custom categories. Removal is blocked while any skill listing uses the category. Renaming a custom category updates its listing category values atomically, subject to Firestore's 500-write batch limit. Approved category-request names are retained as history; those categories can be deactivated but not renamed or deleted.
+
+---
+
+## `reports/{reportId}` (member-submitted moderation reports)
+
+| Field | Type | Notes |
+|---|---|---|
+| `reporterId` | string | authenticated member |
+| `reporterName` | string | display name snapshot |
+| `targetType` | `"user"` \| `"listing"` | |
+| `targetId` | string | target document ID |
+| `reason` | string | 10–1,000 characters |
+| `status` | `"pending"` \| `"under_review"` \| `"resolved"` \| `"dismissed"` | starts as `pending` |
+| `resolutionNote` | string | optional moderator decision, up to 500 characters |
+| `moderatorId` | string | administrator who made the latest decision |
+| `moderatorName` | string | display name snapshot |
+| `createdAt` | timestamp | |
+| `updatedAt` | timestamp | |
+
+Members may create reports about another member or listing but cannot read or modify reports. Only active administrators can read reports and change moderation status.
+
+---
+
+## `adminActivityLogs/{logId}` (append-only admin audit trail)
+
+| Field | Type | Notes |
+|---|---|---|
+| `actorId` | string | authenticated administrator UID |
+| `actorName` | string | display name snapshot |
+| `action` | string | action identifier |
+| `entityType` | string | affected record type |
+| `entityId` | string | affected document ID |
+| `summary` | string | concise human-readable action |
+| `before` | map \| null | prior values for changed fields |
+| `after` | map \| null | new values for changed fields |
+| `createdAt` | timestamp | server timestamp |
+
+Only active admins can read or create log entries. Firestore rules deny updates and deletes. The UI writes each log in the same batch as the corresponding moderation operation.
+
 ---
 
 ## `reviews/{reviewId}` (optional, supports post-swap trust signals)
@@ -129,6 +192,8 @@ Members can read their own requests and approved categories. Approving a request
 
 - **Denormalization**: `ownerName` on `skills` and `skillsOffered` on `users` trade a bit of write-time duplication for cheap reads on the discovery feed and profile pages — important since Firestore charges per document read.
 - **Status enums as strings** (not booleans) on `skills` and `swapRequests` leave room to add states later (e.g. `"expired"`) without a schema migration.
+- Admin role decisions are based on the trusted `users/{uid}.role` and `status` fields. Admin role changes are limited to active admins, cannot target the acting admin, and are audited. Bootstrap the first admin out of band in Firebase Console.
+- `reports`, `categories`, and `adminActivityLogs` are additive collections; existing user, skill, swap, and category-request documents need no migration.
 - **No nested subcollections yet** — flat top-level collections keep the security rules and initial queries simple. If review volume grows, consider moving `reviews` under `users/{userId}/reviews` in a later sprint.
 - **Server timestamps**: always write `createdAt`/`updatedAt` with `serverTimestamp()`, never client `Date.now()`, so ordering is consistent regardless of client clocks.
 

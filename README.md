@@ -13,6 +13,7 @@ Skill Swap is a cashless community marketplace where people share what they can 
 - Swap requests from discovery listings, with received/sent request views and accept, decline, and cancel actions. Recipients select one of the requester's active listings when accepting.
 - Real-time in-app notifications for new swap requests and accepted or declined requests, with unread counts and read controls.
 - Personal analytics for members and platform activity analytics for admins, including six-month trends and category breakdowns.
+- A protected admin workspace with user suspension and role management, skill-listing moderation, pending swap cancellation, custom category management, member reports, notifications, CSV analytics, and append-only administrative audit logs.
 - Light/dark mode with per-device and per-account preference persistence.
 - User profile documents stored at `users/{uid}` in Cloud Firestore.
 - Firestore rules and composite indexes defined in `firestore.rules` and `firestore.indexes.json`.
@@ -70,6 +71,14 @@ The profile's `skillsOffered` and `learningGoals` fields are arrays edited as co
 
    Open [http://localhost:3000](http://localhost:3000).
 
+8. Deploy the updated Firestore rules before using admin operations or member reports:
+
+   ```bash
+   npx firebase-tools deploy --only firestore:rules
+   ```
+
+   No new composite indexes are required for these admin flows. Existing users, skills, swaps, and reports need no migration. On the admin Categories page, use **Import legacy** to backfill existing approved category requests into the managed category catalog; new approvals create catalog entries automatically.
+
 ## Authentication and Dashboard Flow
 
 - New users register from `/` with a display name, email, and password, or use Google sign-in.
@@ -77,6 +86,9 @@ The profile's `skillsOffered` and `learningGoals` fields are arrays edited as co
 - The dashboard provides discovery, listing management, swap requests, and profile views. Skill discovery filters active listings by keyword or category. Users can request a swap from a listing, view requests they sent or received, accept/decline incoming requests, and cancel pending outgoing requests. Users can also edit their bio, skill tags, and learning goals; the display name and email come from Firebase Authentication.
 - Listing owners can create, edit, pause, resume, and delete their skill listings. Selecting an owner opens their public profile.
 - Theme preference is stored locally and, when signed in, synced to `users/{uid}.theme`.
+- Direct visits to `/admin` are verified by a server route using the Firebase ID token and signed-in user's Firestore role; Firestore Security Rules separately enforce authorization for every privileged read and write.
+- The first administrator must be bootstrapped by a trusted project owner in Firebase Console by setting `users/{uid}.role` to `admin` and `status` to `active`. Other active administrators can grant or remove administrator roles for other accounts; those changes are logged.
+- Member reports are available from public member profiles and skill discovery cards. Reports, custom categories, and administrator actions use the `reports`, `categories`, and `adminActivityLogs` collections documented in `firestore-schema.md`.
 - Signing out returns the user to `/`. Direct visits to `/dashboard` require an authenticated Firebase user.
 
 If signup succeeds but the profile write fails, the Auth account may still exist. Try signing in with that account after Firestore is available rather than registering again.
