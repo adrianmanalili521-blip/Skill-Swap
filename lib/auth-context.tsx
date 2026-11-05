@@ -13,6 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+
 import {
   onAuthStateChanged,
   createUserWithEmailAndPassword,
@@ -23,8 +24,18 @@ import {
   updateProfile,
   type User,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
-import { auth, db } from "./firebase";
+
+import { 
+  doc, 
+  getDoc, 
+  setDoc, 
+  serverTimestamp
+} from "firebase/firestore";
+
+import { 
+  auth, 
+  db 
+} from "./firebase";
 
 interface AuthContextValue {
   user: User | null;
