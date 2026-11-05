@@ -19,7 +19,8 @@ import {
 import type { User } from "firebase/auth";
 import { useAuth } from "@/lib/auth-context";
 import { getAuthErrorMessage } from "@/lib/auth-errors";
-import { db } from "@/lib/firebase";
+import { db, storage } from "@/lib/firebase";
+import { deleteObject, getBlob, ref as storageRef } from "firebase/storage";
 import { useTheme } from "@/lib/theme-context";
 
 type Section =
@@ -30,6 +31,7 @@ type Section =
   | "exchanges"
   | "categories"
   | "reports"
+  | "verification"
   | "notifications"
   | "analytics"
   | "activity"
@@ -126,6 +128,19 @@ interface AdminLog {
   createdAt?: TimeValue;
 }
 
+interface AdminVerification {
+  id: string;
+  userId: string;
+  storagePath: string;
+  documentName: string;
+  contentType: string;
+  sizeBytes: number;
+  status: "pending" | "approved" | "rejected";
+  storageDeleted?: boolean;
+  reviewNote?: string;
+  createdAt?: TimeValue;
+}
+
 interface ChartBucket {
   key: string;
   label: string;
@@ -143,6 +158,7 @@ const navigation: { id: Section; label: string; icon: string }[] = [
   { id: "exchanges", label: "Exchange activity", icon: "↔" },
   { id: "categories", label: "Categories", icon: "◈" },
   { id: "reports", label: "Reports & moderation", icon: "⚑" },
+  { id: "verification", label: "ID verification", icon: "✓" },
   { id: "notifications", label: "Notifications", icon: "♧" },
   { id: "analytics", label: "Analytics & reports", icon: "▥" },
   { id: "activity", label: "Admin activity logs", icon: "◷" },
@@ -277,6 +293,7 @@ export default function AdminDashboard() {
   const [categories, setCategories] = useState<AdminCategory[]>([]);
   const [categoryRequests, setCategoryRequests] = useState<AdminCategoryRequest[]>([]);
   const [reports, setReports] = useState<AdminReport[]>([]);
+  const [verifications, setVerifications] = useState<AdminVerification[]>([]);
   const [notifications, setNotifications] = useState<AdminNotification[]>([]);
   const [activity, setActivity] = useState<AdminLog[]>([]);
   const [loadingData, setLoadingData] = useState(true);
@@ -295,6 +312,7 @@ export default function AdminDashboard() {
   const [editingCategory, setEditingCategory] = useState<AdminCategory | null>(null);
   const [reportDrafts, setReportDrafts] = useState<Record<string, ReportStatus>>({});
   const [reportNotes, setReportNotes] = useState<Record<string, string>>({});
+  const [verificationNotes, setVerificationNotes] = useState<Record<string, string>>({});
   const [signingOut, setSigningOut] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [nowMilliseconds, setNowMilliseconds] = useState(0);
@@ -341,13 +359,14 @@ export default function AdminDashboard() {
     setError(null);
     try {
       const [userDocs, listingDocs, swapDocs, categoryDocs, categoryRequestDocs,
-        reportDocs, notificationDocs, activityDocs] = await Promise.all([
+        reportDocs, verificationDocs, notificationDocs, activityDocs] = await Promise.all([
         getDocs(collection(db, "users")),
         getDocs(collection(db, "skills")),
         getDocs(collection(db, "swapRequests")),
         getDocs(collection(db, "categories")),
         getDocs(collection(db, "categoryRequests")),
         getDocs(collection(db, "reports")),
+        getDocs(collection(db, "idVerifications")),
         user ? getDocs(query(collection(db, "notifications"), where("recipientId", "==", user.uid))) : Promise.resolve(null),
         getDocs(collection(db, "adminActivityLogs")),
       ]);
@@ -357,6 +376,7 @@ export default function AdminDashboard() {
       setCategories(fromSnapshot<AdminCategory>(categoryDocs).sort((a, b) => a.name.localeCompare(b.name)));
       setCategoryRequests(fromSnapshot<AdminCategoryRequest>(categoryRequestDocs).sort((a, b) => timeOf(b) - timeOf(a)));
       setReports(fromSnapshot<AdminReport>(reportDocs).sort((a, b) => timeOf(b) - timeOf(a)));
+      setVerifications(fromSnapshot<AdminVerification>(verificationDocs).sort((a, b) => timeOf(b) - timeOf(a)));
       setNotifications(notificationDocs ? fromSnapshot<AdminNotification>(notificationDocs)
         .sort((a, b) => timeOf(b) - timeOf(a)) : []);
       setActivity(fromSnapshot<AdminLog>(activityDocs).sort((a, b) => timeOf(b) - timeOf(a)));
@@ -399,6 +419,7 @@ export default function AdminDashboard() {
   const completedSwaps = swaps.filter((swap) => swap.status === "completed").length;
   const cancelledSwaps = swaps.filter((swap) => swap.status === "cancelled" || swap.status === "declined").length;
   const pendingReports = reports.filter((report) => report.status === "pending").length;
+  const pendingVerifications = verifications.filter((verification) => verification.status === "pending").length;
   const activeListings = listings.filter((listing) => (listing.status ?? "active") === "active").length;
   const knownCategoryNames = new Set(categories.map((category) => category.name.trim().toLowerCase()));
   const legacyCategories = categoryRequests.filter((request) =>
@@ -427,6 +448,15 @@ export default function AdminDashboard() {
     (statusFilter === "all" || report.status === statusFilter)
     && includesTerm([report.targetName, report.targetId, report.reporterName, report.reporterId,
       report.reason, report.status, report.targetType], normalizedSearch));
+  const filteredVerifications = verifications.filter((verification) =>
+    (statusFilter === "all" || verification.status === statusFilter)
+    && includesTerm([
+      verification.userId,
+      verification.documentName,
+      verification.status,
+      memberById.get(verification.userId)?.displayName,
+      memberById.get(verification.userId)?.email,
+    ], normalizedSearch));
   const filteredCategories = categories.filter((category) =>
     (statusFilter === "all" || category.status === statusFilter)
     && includesTerm([category.name, category.description], normalizedSearch));
@@ -759,6 +789,110 @@ export default function AdminDashboard() {
     finally { setSavingId(null); }
   }
 
+  async function reviewVerification(verification: AdminVerification, status: "approved" | "rejected") {
+    if (!user || verification.status !== "pending") return;
+    setSavingId(verification.id);
+    clearMessages();
+    let cleanupWarning = "";
+    try {
+      const note = (verificationNotes[verification.id] ?? "").trim();
+      const batch = writeBatch(db);
+      batch.update(doc(db, "idVerifications", verification.id), {
+        status,
+        reviewNote: note,
+        reviewerId: user.uid,
+        reviewerName: user.displayName || user.email || "Administrator",
+        reviewedAt: serverTimestamp(),
+        storageDeleted: false,
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(doc(db, "users", verification.userId), {
+        verified: status === "approved",
+        updatedAt: serverTimestamp(),
+      });
+      addActivity(batch, user, `identity_verification_${status}`, "idVerification", verification.id,
+        `${status === "approved" ? "Approved" : "Rejected"} identity verification for ${memberById.get(verification.userId)?.displayName || verification.userId}.`,
+        { status: "pending" }, { status, reviewNote: note });
+      await batch.commit();
+
+      try {
+        await deleteObject(storageRef(storage, verification.storagePath));
+        const batch = writeBatch(db);
+        batch.update(doc(db, "idVerifications", verification.id), {
+          storageDeleted: true,
+          updatedAt: serverTimestamp(),
+        });
+        addActivity(batch, user, "identity_evidence_deleted", "idVerification", verification.id,
+          `Deleted stored identity evidence for ${memberById.get(verification.userId)?.displayName || verification.userId}.`,
+          { storageDeleted: false }, { storageDeleted: true });
+        await batch.commit();
+      } catch (cleanupError) {
+        console.error("Identity evidence was reviewed but could not be removed from Storage.", cleanupError);
+        cleanupWarning = " The identity document could not be deleted automatically; retry deletion from this review record.";
+      }
+
+      await loadData();
+      setNotice(`Identity verification ${status}.${cleanupWarning}`);
+    } catch (reviewError) {
+      setError(getAuthErrorMessage(reviewError));
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function removeVerificationEvidence(verification: AdminVerification) {
+    if (!verification.storagePath || verification.storageDeleted) return;
+    setSavingId(verification.id);
+    clearMessages();
+    try {
+      try {
+        await deleteObject(storageRef(storage, verification.storagePath));
+      } catch (storageError) {
+        if (!(typeof storageError === "object" && storageError !== null
+          && "code" in storageError && storageError.code === "storage/object-not-found")) {
+          throw storageError;
+        }
+      }
+      const batch = writeBatch(db);
+      batch.update(doc(db, "idVerifications", verification.id), {
+        storageDeleted: true,
+        updatedAt: serverTimestamp(),
+      });
+      if (!user) throw new Error("Administrator session is unavailable.");
+      addActivity(batch, user, "identity_evidence_deleted", "idVerification", verification.id,
+        `Deleted stored identity evidence for ${memberById.get(verification.userId)?.displayName || verification.userId}.`,
+        { storageDeleted: false }, { storageDeleted: true });
+      await batch.commit();
+      await loadData();
+      setNotice("Identity evidence permanently deleted from Firebase Storage.");
+    } catch (deleteError) {
+      setError(getAuthErrorMessage(deleteError));
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function downloadVerificationEvidence(verification: AdminVerification) {
+    setSavingId(verification.id);
+    clearMessages();
+    try {
+      const blob = await getBlob(storageRef(storage, verification.storagePath), 10 * 1024 * 1024);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      const extension = verification.contentType === "application/pdf"
+        ? "pdf"
+        : verification.contentType === "image/png" ? "png" : "jpg";
+      anchor.download = `identity-document-${verification.userId}.${extension}`;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (downloadError) {
+      setError(getAuthErrorMessage(downloadError));
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   async function markNotificationRead(notification: AdminNotification) {
     if (notification.read) return;
     setSavingId(notification.id);
@@ -867,6 +1001,7 @@ export default function AdminDashboard() {
           <span className="admin-side-icon" aria-hidden="true">{item.icon}</span>
           <span>{item.label}</span>
           {item.id === "reports" && pendingReports > 0 && <span className="admin-nav-count">{pendingReports}</span>}
+          {item.id === "verification" && pendingVerifications > 0 && <span className="admin-nav-count">{pendingVerifications}</span>}
         </button>)}
       </nav>
       <Link className="admin-sidebar-back" href="/dashboard">← Member dashboard</Link>
@@ -933,7 +1068,7 @@ export default function AdminDashboard() {
             <article className="admin-kpi-card compact"><span>New members this month</span><strong>{users.filter((member) => timeOf(member) >= startOfMonth).length}</strong></article>
             <article className="admin-kpi-card compact"><span>Pending category requests</span><strong>{categoryRequests.filter((item) => item.status === "pending").length}</strong></article>
             <article className="admin-kpi-card compact"><span>Open reports</span><strong>{pendingReports}</strong></article>
-            <article className="admin-kpi-card compact"><span>Pending skill review</span><strong>—</strong><small>Listings have no pending status in the current schema</small></article>
+            <article className="admin-kpi-card compact"><span>Pending ID verification</span><strong>{pendingVerifications}</strong><small>Private documents awaiting review</small></article>
           </div>
           <div className="admin-panel-grid">
             <section className="admin-panel admin-chart-panel">
@@ -1091,6 +1226,39 @@ export default function AdminDashboard() {
                 <button type="button" className="admin-button danger" disabled={savingId === category.id} onClick={() => void deleteCategory(category)}>Remove</button></div></article>;
           })}</div> : <div className="admin-empty">No custom categories yet. Built-in categories are maintained in the member app.</div>}
         </section></div>}
+
+        {!loadingData && section === "verification" && <section className="admin-panel verification-admin-panel">
+          <div className="admin-panel-heading">
+            <div><h2>Identity verification requests</h2><p>Private identity documents are visible only to authorized administrators and the submitting member. Evidence is deleted after review.</p></div>
+            <div className="admin-row-actions">
+              <select aria-label="Filter verification status" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(0); }}>
+                <option value="all">All statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option>
+              </select>
+            </div>
+          </div>
+          {filteredVerifications.length ? <div className="verification-admin-list">
+            {filteredVerifications.slice(page * pageSize, (page + 1) * pageSize).map((verification) => {
+              const member = memberById.get(verification.userId);
+              return <article className="verification-admin-card" key={verification.id}>
+                <div className="verification-admin-heading">
+                  <div><strong>{member?.displayName || "Skill Swap member"}</strong><small>{member?.email || verification.userId}</small><small>{verification.documentName} · {(verification.sizeBytes / 1024 / 1024).toFixed(2)} MB · {verification.contentType}</small><small>Submitted {formatDateTime(verification.createdAt)}</small></div>
+                  <span className={`admin-status-pill ${verification.status}`}>{verification.status}</span>
+                </div>
+                {verification.storageDeleted
+                  ? <p className="admin-muted">The identity evidence file has been deleted.</p>
+                  : <div className="admin-row-actions verification-evidence-actions">
+                    <button className="admin-button secondary" type="button" disabled={savingId === verification.id} onClick={() => void downloadVerificationEvidence(verification)}>Download evidence securely</button>
+                    {verification.status !== "pending" && <button className="admin-button danger" type="button" disabled={savingId === verification.id} onClick={() => void removeVerificationEvidence(verification)}>Delete evidence</button>}
+                  </div>}
+                {verification.status === "pending" ? <>
+                  <label className="dashboard-field verification-review-note"><span>Decision note <small>Shared with the member · 500 characters max</small></span><textarea value={verificationNotes[verification.id] ?? ""} onChange={(event) => setVerificationNotes((current) => ({ ...current, [verification.id]: event.target.value }))} maxLength={500} rows={3} /></label>
+                  <div className="admin-row-actions"><button className="admin-button danger" type="button" disabled={savingId === verification.id} onClick={() => void reviewVerification(verification, "rejected")}>Reject</button><button className="admin-button primary" type="button" disabled={savingId === verification.id} onClick={() => void reviewVerification(verification, "approved")}>{savingId === verification.id ? "Saving..." : "Approve & verify"}</button></div>
+                </> : <p className="admin-muted">{verification.reviewNote || "No review note."}</p>}
+              </article>;
+            })}
+          </div> : <div className="admin-empty">No identity verification requests match this filter.</div>}
+          {renderPagination(filteredVerifications.length)}
+        </section>}
 
         {!loadingData && section === "reports" && <section className="admin-panel admin-table-panel">
           <div className="admin-panel-heading"><div><h2>Reports & moderation</h2><p>Investigate member-submitted reports, record a decision, and track moderator history.</p></div>

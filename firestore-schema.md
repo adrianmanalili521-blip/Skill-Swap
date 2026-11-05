@@ -12,6 +12,8 @@ notifications/{notificationId}
 categories/{categoryId}
 reports/{reportId}
 adminActivityLogs/{logId}
+idVerifications/{userId}
+swapRequests/{requestId}/messages/{messageId}
 ```
 
 ---
@@ -30,8 +32,12 @@ Document ID = Firebase Auth `uid` (keeps 1:1 lookup trivial, no extra query need
 | `learningGoals` | array\<string\> | skills the user wants to learn |
 | `role` | `"user"` \| `"admin"` | default `"user"`; only settable by admin via rules |
 | `status` | `"active"` \| `"suspended"` | defaults to `"active"`; only admins can suspend or reactivate users |
-| `rating` | number | running average, updated via Cloud Function on new review (Sprint 3+) |
-| `ratingCount` | number | |
+| `rating` | number | running average, updated by a trusted Cloud Function |
+| `ratingCount` | number | number of accepted reviews; backend-managed |
+| `completedExchangeCount` | number | completed swaps; backend-managed and used for member rankings |
+| `sentRequestCount` | number | lifetime outgoing request count; backend-managed |
+| `receivedRequestCount` | number | lifetime incoming request count; backend-managed |
+| `verified` | boolean | identity reviewed by an administrator; only an admin can change it |
 | `theme` | `"light"` \| `"dark"` | optional, persists MS2 theme toggle per-user |
 | `createdAt` | timestamp | server timestamp |
 | `updatedAt` | timestamp | server timestamp |
@@ -51,10 +57,11 @@ Auto-ID document. One doc per skill listing a user offers.
 | `level` | `"beginner"` \| `"intermediate"` \| `"advanced"` | |
 | `tags` | array\<string\> | for search/filter |
 | `status` | `"active"` \| `"paused"` \| `"removed"` | admin moderation flips to `"removed"` |
+| `requestCount` | number | lifetime request count, incremented by a trusted Cloud Function |
 | `createdAt` | timestamp | |
 | `updatedAt` | timestamp | |
 
-**Indexes needed:** `category + createdAt`, `status + createdAt` (see `firestore.indexes.json`).
+**Indexes needed:** `category + createdAt`, `status + createdAt` (see `firestore.indexes.json`). Discovery supports client-side keyword filtering, sorting, and 12-item pages over currently loaded active listings.
 
 Members create and manage their own skill listings. Admins can pause, remove, and restore listings from `/admin`, but cannot create or swap skills. Removed listings are soft-moderated by changing `status` to `"removed"`; their documents are retained.
 
@@ -71,6 +78,9 @@ Auto-ID document. Represents one user requesting a swap tied to a specific skill
 | `offeredSkillId` | string \| null | the active skill listing the recipient selects from the requester when accepting |
 | `message` | string | optional note from requester |
 | `status` | `"pending"` \| `"accepted"` \| `"declined"` \| `"cancelled"` \| `"completed"` | |
+| `scheduledAt` | timestamp \| null | proposed exchange date/time; editable by either participant after acceptance |
+| `scheduleTimeZone` | string | IANA timezone of the participant who last updated the schedule |
+| `scheduleNote` | string | optional location or meeting details (up to 240 characters) |
 | `createdAt` | timestamp | |
 | `updatedAt` | timestamp | bumped on every status change; drive real-time UI (Sprint 3) off this |
 
@@ -80,7 +90,11 @@ The dashboard creates requests from active skill listings. A request starts as `
 
 Admins can read swap request records for platform analytics; only participants can create or change requests. User analytics are derived from that member's own listings and incoming/outgoing requests. The current dashboards aggregate client-readable records and are intended for the current MVP data volume.
 
-Administrators may cancel pending requests for safety or moderation. They cannot accept, decline, or mark a swap complete on behalf of participants. Every admin cancellation is written to `adminActivityLogs` in the same Firestore batch.
+After acceptance, either participant may set a schedule and send messages in the request's `messages` subcollection. Either participant may mark the exchange completed. Administrators may cancel pending requests for safety or moderation, but cannot accept, decline, or complete exchanges on behalf of participants. Every admin cancellation is written to `adminActivityLogs` in the same Firestore batch.
+
+### `swapRequests/{requestId}/messages/{messageId}`
+
+Private chat messages for accepted or completed exchanges. Each message contains `senderId`, `text` (1–2,000 characters), and server-generated `createdAt`. Only active exchange participants can read/create messages; they cannot edit or delete them. The dashboard streams the newest 100 messages in chronological order.
 
 ---
 
@@ -175,7 +189,7 @@ Only active admins can read or create log entries. Firestore rules deny updates 
 
 ---
 
-## `reviews/{reviewId}` (optional, supports post-swap trust signals)
+## `reviews/{reviewId}` (post-swap trust signals)
 
 | Field | Type | Notes |
 |---|---|---|
@@ -183,8 +197,26 @@ Only active admins can read or create log entries. Firestore rules deny updates 
 | `authorId` | string | reviewer |
 | `targetUserId` | string | who's being reviewed |
 | `rating` | number | 1–5 |
-| `comment` | string | |
+| `comment` | string | optional, up to 500 characters |
 | `createdAt` | timestamp | |
+
+The document ID is `${swapRequestId}_${authorId}`, allowing one immutable review per exchange participant. Rules require a completed exchange and participant-to-participant target. A Cloud Function maintains the reviewed member's average and count.
+
+---
+
+## `idVerifications/{userId}` (private identity review)
+
+One record per user. Contains `userId`, private `storagePath`, sanitized `documentName`, MIME type, byte size, `status` (`pending`, `approved`, `rejected`), `storageDeleted`, optional administrator `reviewNote`, reviewer identity/timestamps, and creation/update timestamps. Only the owner and active administrators can read it. Owners can submit JPEG, PNG, or PDF files up to 10 MiB and resubmit after rejection. Administrators approve/reject with an audit log and the app deletes the evidence from Storage after review; a failed deletion is shown in the admin panel and can be retried. The public user profile contains only the `verified` boolean; it never exposes document metadata or files.
+
+Evidence objects use `identityDocuments/{userId}/{randomFileId}`. Storage rules deny public access, restrict upload type and size, and permit reads only by the owner or an active administrator. Configure Firebase Storage CORS for the app's origin if browser `getBlob` downloads are blocked.
+
+---
+
+## Backend-maintained counters
+
+Cloud Functions v2 keep `skills.requestCount`, user `sentRequestCount` / `receivedRequestCount`, `completedExchangeCount`, and review `rating` / `ratingCount` synchronized. Private idempotency markers in `swapRequestMetrics`, `completedExchangeMetrics`, and `reviewMetrics` prevent duplicate event delivery from double-counting. Client rules deny writes to these metrics and protected user/listing counters. The `users` ranking query uses `completedExchangeCount` and `rating`; existing installations should backfill missing counter fields before relying on a complete ranking.
+
+Cloud Functions require a Firebase project with billing enabled. Deploy functions and rules together so client writes and trusted aggregates stay consistent.
 
 ---
 
@@ -194,7 +226,6 @@ Only active admins can read or create log entries. Firestore rules deny updates 
 - **Status enums as strings** (not booleans) on `skills` and `swapRequests` leave room to add states later (e.g. `"expired"`) without a schema migration.
 - Admin role decisions are based on the trusted `users/{uid}.role` and `status` fields. Admin role changes are limited to active admins, cannot target the acting admin, and are audited. Bootstrap the first admin out of band in Firebase Console.
 - `reports`, `categories`, and `adminActivityLogs` are additive collections; existing user, skill, swap, and category-request documents need no migration.
-- **No nested subcollections yet** — flat top-level collections keep the security rules and initial queries simple. If review volume grows, consider moving `reviews` under `users/{userId}/reviews` in a later sprint.
 - **Server timestamps**: always write `createdAt`/`updatedAt` with `serverTimestamp()`, never client `Date.now()`, so ordering is consistent regardless of client clocks.
 
 ## Next steps (rest of Sprint 1)
