@@ -30,6 +30,17 @@ service cloud.firestore {
         (request.auth.uid == data.fromUserId || request.auth.uid == data.toUserId);
     }
 
+    function validSkillShape(data) {
+      return data.keys().hasOnly(['ownerId', 'ownerName', 'title', 'description', 'category',
+                                  'level', 'tags', 'status', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 70
+        && data.description is string && data.description.size() <= 500
+        && data.category is string && data.category.size() <= 40
+        && data.level in ['beginner', 'intermediate', 'advanced']
+        && data.tags is list && data.tags.size() <= 20
+        && data.ownerName is string && data.ownerName.size() <= 100;
+    }
+
     // ---------- users/{userId} ----------
     // Profile info is readable by active signed-in users (needed for
     // browsing skills/listings and seeing who posted them).
@@ -39,10 +50,14 @@ service cloud.firestore {
       allow create: if isOwner(userId)
                     && request.resource.data.uid == userId
                     && request.resource.data.role == 'user'
+                    && request.resource.data.get('rating', 0) == 0
+                    && request.resource.data.get('ratingCount', 0) == 0
                     && request.resource.data.get('status', 'active') == 'active'; // clients can never self-assign admin or status
       allow update: if (
                       isOwner(userId)
                       && isActiveUser()
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['displayName', 'photoURL', 'bio', 'skillsOffered', 'learningGoals', 'theme', 'updatedAt'])
                       && request.resource.data.role == resource.data.role
                       && request.resource.data.get('status', 'active') == resource.data.get('status', 'active')
                     ) || (
@@ -66,11 +81,17 @@ service cloud.firestore {
       allow read: if isActiveUser();
       allow create: if isActiveUser()
                     && !isAdmin()
-                    && request.resource.data.ownerId == request.auth.uid;
+                    && request.resource.data.ownerId == request.auth.uid
+                    && request.resource.data.status == 'active'
+                    && validSkillShape(request.resource.data);
+      // Owners may only toggle active/paused and cannot touch a listing an admin removed.
       allow update: if (isOwner(resource.data.ownerId)
                && isActiveUser()
                && !isAdmin()
-               && request.resource.data.ownerId == resource.data.ownerId)
+               && resource.data.status != 'removed'
+               && request.resource.data.status in ['active', 'paused']
+               && request.resource.data.ownerId == resource.data.ownerId
+               && validSkillShape(request.resource.data))
             || (
               isAdmin()
               && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])

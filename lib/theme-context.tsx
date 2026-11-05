@@ -27,6 +27,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // 1. Sync with localStorage on initial mount
   useEffect(() => {
     const storedTheme = window.localStorage.getItem("skill-swap-theme");
+    // Reading localStorage must happen after mount to avoid a hydration mismatch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (storedTheme === "light" || storedTheme === "dark") setTheme(storedTheme);
   }, []);
 

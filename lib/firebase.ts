@@ -4,6 +4,7 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
 import {
+  getFirestore,
   initializeFirestore,
   type Firestore,
   persistentLocalCache,
@@ -25,19 +26,23 @@ const app: FirebaseApp = getApps().length ? getApp() : initializeApp(firebaseCon
 
 const auth: Auth = getAuth(app);
 
-// Offline persistence + multi-tab support (client-side only)
-let db: Firestore;
-if (typeof window !== "undefined") {
-  db = initializeFirestore(app, {
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager(),
-    }),
-  });
-} else {
-  // Server-side (SSR/build) fallback — no persistence
-  const { getFirestore } = require("firebase/firestore");
-  db = getFirestore(app);
+// Offline persistence + multi-tab support (client-side only).
+// initializeFirestore throws if Firestore was already initialised for this app
+// (e.g. on hot reload), so fall back to the existing instance in that case.
+function createFirestore(): Firestore {
+  if (typeof window === "undefined") return getFirestore(app); // SSR/build: no persistence
+  try {
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    });
+  } catch {
+    return getFirestore(app);
+  }
 }
+
+const db: Firestore = createFirestore();
 
 const storage: FirebaseStorage = getStorage(app);
 

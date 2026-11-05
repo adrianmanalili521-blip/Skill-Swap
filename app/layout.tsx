@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Skill Swap | Sign in",
-  description: "Sign in or create your Skill Swap account.",
+  title: "Skill Swap",
+  description: "A cashless community marketplace to share and learn skills.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
