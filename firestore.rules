@@ -413,13 +413,106 @@ service cloud.firestore {
                       && resource.data.status == 'accepted'
                       && request.resource.data.status == resource.data.status
                       && request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['scheduledAt', 'scheduleTimeZone', 'scheduleNote', 'updatedAt'])
-                      && (request.resource.data.scheduledAt is timestamp
-                        || request.resource.data.scheduledAt == null)
+                        .hasOnly([
+                          'scheduleStatus', 'scheduleProposerId', 'scheduleOptions',
+                          'scheduleSelectedIndex', 'scheduleMode', 'scheduleTimeZone',
+                          'schedulePlatform', 'scheduleVenue', 'scheduleNote',
+                          'scheduledAt', 'updatedAt'
+                        ])
+                      && request.resource.data.scheduleStatus == 'proposed'
+                      && request.resource.data.scheduleProposerId == request.auth.uid
+                      && request.resource.data.scheduleOptions is list
+                      && request.resource.data.scheduleOptions.size() >= 1
+                      && request.resource.data.scheduleOptions.size() <= 5
+                      && request.resource.data.scheduleOptions[0] is timestamp
+                      && request.resource.data.scheduleOptions[0] > request.time
+                      && (
+                        request.resource.data.scheduleOptions.size() < 2
+                        || (
+                          request.resource.data.scheduleOptions[1] is timestamp
+                          && request.resource.data.scheduleOptions[1] > request.time
+                        )
+                      )
+                      && (
+                        request.resource.data.scheduleOptions.size() < 3
+                        || (
+                          request.resource.data.scheduleOptions[2] is timestamp
+                          && request.resource.data.scheduleOptions[2] > request.time
+                        )
+                      )
+                      && (
+                        request.resource.data.scheduleOptions.size() < 4
+                        || (
+                          request.resource.data.scheduleOptions[3] is timestamp
+                          && request.resource.data.scheduleOptions[3] > request.time
+                        )
+                      )
+                      && (
+                        request.resource.data.scheduleOptions.size() < 5
+                        || (
+                          request.resource.data.scheduleOptions[4] is timestamp
+                          && request.resource.data.scheduleOptions[4] > request.time
+                        )
+                      )
+                      && request.resource.data.scheduleSelectedIndex == null
+                      && request.resource.data.scheduleMode in ['online', 'onsite']
                       && request.resource.data.scheduleTimeZone is string
+                      && request.resource.data.scheduleTimeZone.size() > 0
                       && request.resource.data.scheduleTimeZone.size() <= 80
                       && request.resource.data.scheduleNote is string
                       && request.resource.data.scheduleNote.size() <= 240
+                      && request.resource.data.scheduledAt == null
+                      && (
+                        (
+                          request.resource.data.scheduleMode == 'online'
+                          && request.resource.data.schedulePlatform is string
+                          && request.resource.data.schedulePlatform.size() > 0
+                          && request.resource.data.schedulePlatform.size() <= 80
+                          && request.resource.data.scheduleVenue == ''
+                        )
+                        || (
+                          request.resource.data.scheduleMode == 'onsite'
+                          && request.resource.data.schedulePlatform == ''
+                          && request.resource.data.scheduleVenue is string
+                          && request.resource.data.scheduleVenue.size() > 0
+                          && request.resource.data.scheduleVenue.size() <= 240
+                          && request.resource.data.scheduleNote == ''
+                        )
+                      )
+                      && request.resource.data.updatedAt is timestamp
+                    ) || (
+                      isParticipant(resource.data)
+                      && isActiveUser()
+                      && !isAdmin()
+                      && resource.data.status == 'accepted'
+                      && resource.data.scheduleStatus == 'proposed'
+                      && request.auth.uid != resource.data.scheduleProposerId
+                      && request.resource.data.status == resource.data.status
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['scheduleStatus', 'scheduleSelectedIndex', 'updatedAt'])
+                      && request.resource.data.scheduleStatus == 'selected'
+                      && request.resource.data.scheduleSelectedIndex is int
+                      && request.resource.data.scheduleSelectedIndex >= 0
+                      && request.resource.data.scheduleSelectedIndex < resource.data.scheduleOptions.size()
+                      && resource.data.scheduleOptions[request.resource.data.scheduleSelectedIndex] > request.time
+                      && request.resource.data.updatedAt is timestamp
+                    ) || (
+                      isParticipant(resource.data)
+                      && isActiveUser()
+                      && !isAdmin()
+                      && resource.data.status == 'accepted'
+                      && resource.data.scheduleStatus == 'selected'
+                      && request.auth.uid == resource.data.scheduleProposerId
+                      && resource.data.scheduleSelectedIndex is int
+                      && resource.data.scheduleSelectedIndex >= 0
+                      && resource.data.scheduleSelectedIndex < resource.data.scheduleOptions.size()
+                      && resource.data.scheduleOptions[resource.data.scheduleSelectedIndex] > request.time
+                      && request.resource.data.status == resource.data.status
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['scheduleStatus', 'scheduledAt', 'updatedAt'])
+                      && request.resource.data.scheduleStatus == 'confirmed'
+                      && request.resource.data.scheduledAt
+                        == resource.data.scheduleOptions[resource.data.scheduleSelectedIndex]
                       && request.resource.data.updatedAt is timestamp
                     ) || (
                       isParticipant(resource.data)

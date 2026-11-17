@@ -78,9 +78,16 @@ Auto-ID document. Represents one user requesting a swap tied to a specific skill
 | `offeredSkillId` | string \| null | the active skill listing the recipient selects from the requester when accepting |
 | `message` | string | optional note from requester |
 | `status` | `"pending"` \| `"accepted"` \| `"declined"` \| `"cancelled"` \| `"completed"` | |
-| `scheduledAt` | timestamp \| null | proposed exchange date/time; editable by either participant after acceptance |
-| `scheduleTimeZone` | string | IANA timezone of the participant who last updated the schedule |
-| `scheduleNote` | string | optional location or meeting details (up to 240 characters) |
+| `scheduledAt` | timestamp \| null | confirmed exchange date/time; null until a proposed time is confirmed |
+| `scheduleStatus` | `"proposed"` \| `"selected"` \| `"confirmed"` | absent until participants start scheduling |
+| `scheduleProposerId` | string \| null | participant who offered the current availability options |
+| `scheduleOptions` | list\<timestamp\> | 1–5 future time options offered by a participant |
+| `scheduleSelectedIndex` | integer \| null | option selected by the other participant |
+| `scheduleTimeZone` | string | IANA timezone used when the availability options were proposed |
+| `scheduleMode` | `"online"` \| `"onsite"` | format selected by the participant proposing times |
+| `schedulePlatform` | string | online meeting platform, up to 80 characters |
+| `scheduleVenue` | string | onsite venue or meeting place, up to 240 characters |
+| `scheduleNote` | string | optional online meeting link or joining details, up to 240 characters |
 | `createdAt` | timestamp | |
 | `updatedAt` | timestamp | bumped on every status change; drive real-time UI (Sprint 3) off this |
 
@@ -90,7 +97,7 @@ The dashboard creates requests from active skill listings. A request starts as `
 
 Admins can read swap request records for platform analytics; only participants can create or change requests. User analytics are derived from that member's own listings and incoming/outgoing requests. The current dashboards aggregate client-readable records and are intended for the current MVP data volume.
 
-After acceptance, either participant may set a schedule and send messages in the request's `messages` subcollection. Either participant may mark the exchange completed. Administrators may cancel pending requests for safety or moderation, but cannot accept, decline, or complete exchanges on behalf of participants. Every admin cancellation is written to `adminActivityLogs` in the same Firestore batch.
+After acceptance, either participant can offer 1–5 available future times and choose online (platform and optional joining details) or onsite (venue) for the exchange. The other participant selects an offered time, and the proposer confirms it. Either participant can submit a new set of times to reschedule. The confirmed time and meeting details are visible to both participants in the exchange workspace. Both participants can also send messages in the request's `messages` subcollection, and either may mark the exchange completed. Administrators may cancel pending requests for safety or moderation, but cannot accept, decline, or complete exchanges on behalf of participants. Every admin cancellation is written to `adminActivityLogs` in the same Firestore batch.
 
 ### `swapRequests/{requestId}/messages/{messageId}`
 

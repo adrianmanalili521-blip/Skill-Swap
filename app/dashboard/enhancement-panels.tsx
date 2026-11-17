@@ -28,6 +28,13 @@ interface ExchangeRecord {
   scheduledAt?: Timestamp | null;
   scheduleTimeZone?: string;
   scheduleNote?: string;
+  scheduleStatus?: "proposed" | "selected" | "confirmed";
+  scheduleProposerId?: string | null;
+  scheduleOptions?: Timestamp[];
+  scheduleSelectedIndex?: number | null;
+  scheduleMode?: "online" | "onsite";
+  schedulePlatform?: string;
+  scheduleVenue?: string;
 }
 
 interface ChatMessage {
@@ -52,18 +59,19 @@ interface RankedMember {
   completedExchangeCount?: number;
 }
 
-function localDateTime(value?: Timestamp | null) {
-  if (!value) return "";
-  const date = value.toDate();
-  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
-  return date.toISOString().slice(0, 16);
-}
-
 function displayDate(value?: Timestamp) {
   return value?.toDate().toLocaleString(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
   }) ?? "Sending…";
+}
+
+function scheduleOptionLabel(value: Timestamp, timeZone?: string) {
+  const localTime = value.toDate().toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  return timeZone ? `${localTime} (your local time; proposed in ${timeZone})` : localTime;
 }
 
 export function ExchangeWorkspace({
@@ -80,8 +88,12 @@ export function ExchangeWorkspace({
   const [record, setRecord] = useState<ExchangeRecord | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
-  const [scheduledAt, setScheduledAt] = useState("");
+  const [scheduleOptionsInput, setScheduleOptionsInput] = useState([""]);
+  const [scheduleMode, setScheduleMode] = useState<"online" | "onsite">("online");
+  const [schedulePlatform, setSchedulePlatform] = useState("");
+  const [scheduleVenue, setScheduleVenue] = useState("");
   const [scheduleNote, setScheduleNote] = useState("");
+  const [showProposalForm, setShowProposalForm] = useState(false);
   const [rating, setRating] = useState(5);
   const [review, setReview] = useState("");
   const [hasReviewed, setHasReviewed] = useState(false);
@@ -98,8 +110,6 @@ export function ExchangeWorkspace({
       }
       const next = { id: snapshot.id, ...snapshot.data() } as ExchangeRecord;
       setRecord(next);
-      setScheduledAt(localDateTime(next.scheduledAt));
-      setScheduleNote(next.scheduleNote ?? "");
     },
     (snapshotError) => setError(`Unable to load exchange details: ${getAuthErrorMessage(snapshotError)}`),
   ), [requestId]);
@@ -147,26 +157,108 @@ export function ExchangeWorkspace({
     }
   }
 
-  async function saveSchedule(event: FormEvent<HTMLFormElement>) {
+  async function submitScheduleProposal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!record || !scheduledAt || busy) return;
-    const date = new Date(scheduledAt);
-    if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) {
-      setError("Choose a date and time in the future.");
+    if (busy) return;
+    const dates = scheduleOptionsInput
+      .map((value) => new Date(value))
+      .filter((date) => !Number.isNaN(date.getTime()));
+    if (!dates.length || scheduleOptionsInput.some((value) => value && Number.isNaN(new Date(value).getTime()))) {
+      setError("Enter at least one valid available date and time.");
+      return;
+    }
+    if (dates.some((date) => date.getTime() <= Date.now())) {
+      setError("All proposed times must be in the future.");
+      return;
+    }
+    if (new Set(dates.map((date) => date.getTime())).size !== dates.length) {
+      setError("Choose a different date and time for each availability option.");
+      return;
+    }
+    if (scheduleMode === "onsite" && !scheduleVenue.trim()) {
+      setError("Enter a venue or meeting place for an onsite exchange.");
+      return;
+    }
+    if (scheduleMode === "online" && !schedulePlatform.trim()) {
+      setError("Enter the online platform you want to use.");
       return;
     }
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       await updateDoc(doc(db, "swapRequests", requestId), {
-        scheduledAt: Timestamp.fromDate(date),
+        scheduleStatus: "proposed",
+        scheduleProposerId: currentUserId,
+        scheduleOptions: dates
+          .sort((first, second) => first.getTime() - second.getTime())
+          .map((date) => Timestamp.fromDate(date)),
+        scheduleSelectedIndex: null,
+        scheduleMode,
         scheduleTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        scheduleNote: scheduleNote.trim(),
+        schedulePlatform: scheduleMode === "online" ? schedulePlatform.trim() : "",
+        scheduleVenue: scheduleMode === "onsite" ? scheduleVenue.trim() : "",
+        scheduleNote: scheduleMode === "online" ? scheduleNote.trim() : "",
+        scheduledAt: null,
         updatedAt: serverTimestamp(),
       });
-      setNotice("Exchange time saved.");
-    } catch (saveError) {
-      setError(getAuthErrorMessage(saveError));
+      setScheduleOptionsInput([""]);
+      setSchedulePlatform("");
+      setScheduleVenue("");
+      setScheduleNote("");
+      setShowProposalForm(false);
+      setNotice("Your available times were sent to your swap partner.");
+    } catch (proposalError) {
+      setError(getAuthErrorMessage(proposalError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function selectScheduleOption(index: number) {
+    if (requestStatus !== "accepted" || !record || busy || record.scheduleStatus !== "proposed"
+      || record.scheduleProposerId === currentUserId || index < 0
+      || index >= (record.scheduleOptions?.length ?? 0)) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await updateDoc(doc(db, "swapRequests", requestId), {
+        scheduleStatus: "selected",
+        scheduleSelectedIndex: index,
+        updatedAt: serverTimestamp(),
+      });
+      setNotice("You selected a time. Your partner needs to confirm it.");
+    } catch (selectionError) {
+      setError(getAuthErrorMessage(selectionError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmSchedule() {
+    if (requestStatus !== "accepted" || !record || busy || record.scheduleStatus !== "selected"
+      || record.scheduleProposerId !== currentUserId) return;
+    const selectedIndex = record.scheduleSelectedIndex;
+    const selectedTime = selectedIndex === null || selectedIndex === undefined
+      ? undefined
+      : record.scheduleOptions?.[selectedIndex];
+    if (!selectedTime || selectedTime.toMillis() <= Date.now()) {
+      setError("That proposed time has passed. Send new available times instead.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await updateDoc(doc(db, "swapRequests", requestId), {
+        scheduleStatus: "confirmed",
+        scheduledAt: selectedTime,
+        updatedAt: serverTimestamp(),
+      });
+      setNotice("The exchange time is confirmed.");
+    } catch (confirmationError) {
+      setError(getAuthErrorMessage(confirmationError));
     } finally {
       setBusy(false);
     }
@@ -214,17 +306,69 @@ export function ExchangeWorkspace({
 
   if (requestStatus !== "accepted" && requestStatus !== "completed") return null;
 
+  const selectedScheduleOption = record?.scheduleSelectedIndex === null
+    || record?.scheduleSelectedIndex === undefined
+    ? undefined
+    : record.scheduleOptions?.[record.scheduleSelectedIndex];
+  const hasConfirmedSchedule = Boolean(record?.scheduledAt)
+    && (record?.scheduleStatus === "confirmed" || !record?.scheduleStatus);
+
   return <section className="exchange-workspace" aria-label="Exchange schedule and chat">
     {error && <p className="dashboard-message dashboard-error" role="alert">{error}</p>}
     {notice && <p className="dashboard-message dashboard-notice" role="status">{notice}</p>}
     <div className="exchange-tools-grid">
-      <form className="exchange-tool-card" onSubmit={(event) => void saveSchedule(event)}>
+      <section className="exchange-tool-card" aria-label="Schedule this exchange">
         <h4>Schedule this exchange</h4>
-        <label className="dashboard-field"><span>Date and time</span><input type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} required disabled={requestStatus === "completed"} /></label>
-        <label className="dashboard-field"><span>Location or meeting details <small>Optional</small></span><input value={scheduleNote} onChange={(event) => setScheduleNote(event.target.value)} maxLength={240} placeholder="Share a meeting place or call details" disabled={requestStatus === "completed"} /></label>
-        {record?.scheduledAt && <p className="exchange-schedule-current">Agreed time: {record.scheduledAt.toDate().toLocaleString(undefined, { timeZone: record.scheduleTimeZone || undefined })} {record.scheduleTimeZone ? `(${record.scheduleTimeZone})` : ""}</p>}
-        {requestStatus === "accepted" && <button className="secondary-action" type="submit" disabled={busy}>{busy ? "Saving..." : "Save schedule"}</button>}
-      </form>
+        {hasConfirmedSchedule && record?.scheduledAt && <div className="exchange-schedule-current">
+          <strong>Confirmed:</strong> {record.scheduledAt.toDate().toLocaleString(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          })} (your local time)
+          {record.scheduleTimeZone && <span> · Proposed in {record.scheduleTimeZone}</span>}
+          {record.scheduleMode === "online" && <p>Online · {record.schedulePlatform || "platform to be confirmed"}{record.scheduleNote ? ` · ${record.scheduleNote}` : ""}</p>}
+          {record.scheduleMode === "onsite" && <p>Onsite · {record.scheduleVenue || record.scheduleNote}</p>}
+          {!record.scheduleMode && record.scheduleNote && <p>{record.scheduleNote}</p>}
+        </div>}
+        {record?.scheduleStatus === "proposed" && <>
+          <p className="exchange-chat-empty">{record.scheduleProposerId === currentUserId
+            ? "Your available times are waiting for your partner to choose."
+            : "Your partner shared these available times. Choose one or suggest another set."}</p>
+          <ul className="exchange-schedule-options">
+            {(record.scheduleOptions ?? []).map((option, index) => <li key={`${option.toMillis()}-${index}`}>
+              <span>{scheduleOptionLabel(option, record.scheduleTimeZone)}</span>
+              {requestStatus === "accepted" && record.scheduleProposerId !== currentUserId && <button className="secondary-action" type="button" disabled={busy} onClick={() => void selectScheduleOption(index)}>Choose this time</button>}
+            </li>)}
+          </ul>
+        </>}
+        {record?.scheduleStatus && record.scheduleStatus !== "confirmed" && <p className="exchange-chat-empty">{record.scheduleMode === "online"
+          ? `Online · ${record.schedulePlatform || "Platform not specified"}${record.scheduleNote ? ` · ${record.scheduleNote}` : ""}`
+          : `Onsite · ${record.scheduleVenue || "Venue not specified"}`}</p>}
+        {record?.scheduleStatus === "selected" && selectedScheduleOption && <>
+          <p className="exchange-schedule-current">Selected time: {scheduleOptionLabel(selectedScheduleOption, record.scheduleTimeZone)}</p>
+          {record.scheduleProposerId === currentUserId
+            ? <button className="primary-action" type="button" disabled={busy} onClick={() => void confirmSchedule()}>Confirm this time</button>
+            : <p className="exchange-chat-empty">Waiting for your partner to confirm this time.</p>}
+        </>}
+        {requestStatus === "accepted" && (showProposalForm
+          ? <form className="exchange-schedule-form" onSubmit={(event) => void submitScheduleProposal(event)}>
+            <h4>Share your availability</h4>
+            <p className="exchange-chat-empty">Offer up to five times that work for you. Your partner can choose one.</p>
+            {scheduleOptionsInput.map((value, index) => <label className="dashboard-field" key={index}>
+              <span>Available time {index + 1}</span>
+              <div className="exchange-availability-row">
+                <input type="datetime-local" value={value} onChange={(event) => setScheduleOptionsInput((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} />
+                {scheduleOptionsInput.length > 1 && <button className="text-action destructive-action" type="button" onClick={() => setScheduleOptionsInput((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>}
+              </div>
+            </label>)}
+            {scheduleOptionsInput.length < 5 && <button className="text-action" type="button" onClick={() => setScheduleOptionsInput((current) => [...current, ""])}>＋ Add another time</button>}
+            <label className="dashboard-field"><span>Meeting format</span><select value={scheduleMode} onChange={(event) => setScheduleMode(event.target.value as typeof scheduleMode)}><option value="online">Online</option><option value="onsite">Onsite</option></select></label>
+            {scheduleMode === "online"
+              ? <><label className="dashboard-field"><span>Online platform</span><input value={schedulePlatform} onChange={(event) => setSchedulePlatform(event.target.value)} maxLength={80} placeholder="e.g. Google Meet, Zoom, Discord" required /></label><label className="dashboard-field"><span>Meeting link or instructions <small>Optional</small></span><input value={scheduleNote} onChange={(event) => setScheduleNote(event.target.value)} maxLength={240} placeholder="Add a link or joining details" /></label></>
+              : <label className="dashboard-field"><span>Venue or meeting place <small>Choose a public place</small></span><input value={scheduleVenue} onChange={(event) => setScheduleVenue(event.target.value)} maxLength={240} placeholder="e.g. library, campus, or public cafe" required /></label>}
+            <div className="exchange-schedule-actions"><button className="secondary-action" type="button" onClick={() => setShowProposalForm(false)}>Cancel</button><button className="primary-action" type="submit" disabled={busy}>{busy ? "Sending..." : "Send available times"}</button></div>
+          </form>
+          : <button className="secondary-action" type="button" onClick={() => setShowProposalForm(true)}>{record?.scheduleStatus ? "Suggest new times" : "Share your available times"}</button>)}
+      </section>
       <section className="exchange-tool-card" aria-label="Private exchange chat">
         <h4>Exchange chat</h4>
         <div className="exchange-message-list" aria-live="polite">

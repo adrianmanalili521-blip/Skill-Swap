@@ -1611,6 +1611,15 @@ html[data-theme="dark"] .admin-shell .dashboard-message.dashboard-notice { borde
 .exchange-tool-card h4,.exchange-review-form h4 { margin: 0; color: var(--text); font-family: Georgia, "Times New Roman", serif; font-size: 16px; font-weight: 400; }
 .exchange-tool-card .dashboard-field,.exchange-review-form .dashboard-field { margin: 0; }
 .exchange-schedule-current,.exchange-chat-empty { margin: 0; color: var(--text-muted); font-size: 10px; line-height: 1.5; }
+.exchange-schedule-current p { margin: 5px 0 0; }
+.exchange-schedule-options { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.exchange-schedule-options li,.exchange-availability-row,.exchange-schedule-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.exchange-schedule-options li { padding: 8px; border: 1px solid var(--border); border-radius: 3px; color: var(--text); font-size: 9px; }
+.exchange-schedule-options .secondary-action { min-height: 34px; padding: 0 9px; font-size: 9px; }
+.exchange-schedule-form { display: grid; gap: 9px; }
+.exchange-schedule-form h4 { margin: 0; color: var(--text); font-family: Georgia, "Times New Roman", serif; font-size: 15px; font-weight: 400; }
+.exchange-schedule-form .dashboard-field { margin: 0; }
+.exchange-availability-row input { min-width: 0; flex: 1; }
 .exchange-message-list { display: grid; align-content: start; gap: 7px; max-height: 225px; overflow-y: auto; padding: 3px; }
 .exchange-message { display: grid; max-width: 88%; justify-self: start; gap: 4px; margin: 0; padding: 8px 10px; border-radius: 4px 10px 10px; background: var(--surface-muted); color: var(--text); font-size: 10px; overflow-wrap: anywhere; }
 .exchange-message.mine { justify-self: end; border-radius: 10px 4px 10px 10px; background: #e5efe5; }
