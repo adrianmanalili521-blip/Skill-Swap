@@ -1,0 +1,43 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function activeUser() {
+      return signedIn()
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.get('status', 'active') == 'active';
+    }
+
+    function activeAdmin() {
+      return activeUser()
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    match /identityDocuments/{userId}/{fileId} {
+      allow read: if activeAdmin() || (activeUser() && request.auth.uid == userId);
+      allow create: if activeUser()
+                    && request.auth.uid == userId
+                    && resource == null
+                    && request.resource.size > 0
+                    && request.resource.size <= 10 * 1024 * 1024
+                    && request.resource.contentType in ['image/jpeg', 'image/png', 'application/pdf']
+                    && request.resource.metadata.ownerUid == userId
+                    && (!firestore.exists(/databases/(default)/documents/idVerifications/$(userId))
+                      || firestore.get(/databases/(default)/documents/idVerifications/$(userId)).data.status == 'rejected');
+      allow update: if false;
+      allow delete: if activeAdmin()
+                    || (activeUser()
+                      && request.auth.uid == userId
+                      && (!firestore.exists(/databases/(default)/documents/idVerifications/$(userId))
+                        || firestore.get(/databases/(default)/documents/idVerifications/$(userId)).data.storagePath != resource.name));
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
