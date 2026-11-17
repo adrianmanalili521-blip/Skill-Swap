@@ -22,6 +22,7 @@ import { getAuthErrorMessage } from "@/lib/auth-errors";
 import { db, storage } from "@/lib/firebase";
 import { deleteObject, getBlob, ref as storageRef } from "firebase/storage";
 import { useTheme } from "@/lib/theme-context";
+import { DEFAULT_SKILL_DURATION_MINUTES, formatSkillPrice } from "@/lib/skill-listing-format";
 
 type Section =
   | "overview"
@@ -60,6 +61,8 @@ interface AdminListing {
   description?: string;
   category?: string;
   status?: ListingStatus;
+  durationMinutes?: number;
+  price?: number | null;
   createdAt?: TimeValue;
 }
 
@@ -1181,11 +1184,11 @@ export default function AdminDashboard() {
             </div>
           </div>
           {filteredListings.length ? <div className="admin-table-scroll"><table className="admin-table">
-            <thead><tr><th>Listing</th><th>Owner</th><th>Category</th><th>Submitted</th><th>Status</th><th>Moderation</th></tr></thead>
+            <thead><tr><th>Listing</th><th>Owner</th><th>Category</th><th>Session</th><th>Price</th><th>Submitted</th><th>Status</th><th>Moderation</th></tr></thead>
             <tbody>{filteredListings.slice(page * pageSize, (page + 1) * pageSize).map((listing) => {
               const status = listing.status ?? "active";
               return <tr key={listing.id}><td className="admin-listing-cell"><strong>{listing.title || "Untitled listing"}</strong><small>{listing.description || "No description"}</small></td>
-                <td>{listing.ownerName || memberById.get(listing.ownerId)?.displayName || listing.ownerId}</td><td>{listing.category || "Uncategorized"}</td><td>{formatDate(listing.createdAt)}</td>
+                <td>{listing.ownerName || memberById.get(listing.ownerId)?.displayName || listing.ownerId}</td><td>{listing.category || "Uncategorized"}</td><td>{listing.durationMinutes ?? DEFAULT_SKILL_DURATION_MINUTES} min</td><td>{formatSkillPrice(listing.price)}</td><td>{formatDate(listing.createdAt)}</td>
                 <td><span className={`admin-status-pill ${status}`}>{status}</span></td><td><div className="admin-row-actions">
                   {status === "removed" ? <button type="button" className="admin-button secondary" disabled={savingId === listing.id} onClick={() => void updateListingStatus(listing, "active")}>Restore</button> : <>
                     <button type="button" className="admin-button secondary" disabled={savingId === listing.id} onClick={() => void updateListingStatus(listing, status === "paused" ? "active" : "paused")}>{status === "paused" ? "Activate" : "Pause"}</button>

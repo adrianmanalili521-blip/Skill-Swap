@@ -1043,6 +1043,7 @@ button:disabled {
 .listing-owner:hover,.back-link:hover { text-decoration: underline; }
 .mini-avatar { display: grid; width: 24px; height: 24px; flex: 0 0 24px; place-items: center; border-radius: 50%; background: #d8e7dc; color: #315b42; font-family: Georgia, "Times New Roman", serif; font-size: 12px; }
 .listing-status { color: #668169; font-size: 9px; white-space: nowrap; }
+.skill-listing-meta { margin: 8px 0 0; color: var(--text-muted); font-size: 10px; }
 .empty-state { display: flex; min-height: 150px; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 22px; border: 1px dashed var(--border); border-radius: 4px; color: var(--text-muted); font-size: 12px; text-align: center; }
 .empty-state strong { color: var(--text); font-family: Georgia, "Times New Roman", serif; font-size: 20px; font-weight: 400; }
 .empty-state .primary-action { margin-top: 8px; }
@@ -1588,7 +1589,7 @@ html[data-theme="dark"] .admin-shell .dashboard-message.dashboard-notice { borde
 .discover-tools { grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(145px, 185px)) auto; }
 .discovery-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; color: var(--text-muted); font-size: 10px; }
 .discovery-pagination > div { display: flex; gap: 8px; }
-.profile-enhancements { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 15px; }
+.profile-enhancements { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 15px; }
 .profile-counter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; margin-top: 15px; }
 .community-rankings,.id-verification-panel { min-width: 0; padding: 19px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
 .community-rankings .dashboard-card-heading,.id-verification-panel .dashboard-card-heading { margin-bottom: 13px; }
@@ -1599,6 +1600,20 @@ html[data-theme="dark"] .admin-shell .dashboard-message.dashboard-notice { borde
 .community-rankings li > span:last-child { grid-column: 2; color: var(--text-muted); font-size: 9px; }
 .ranking-place { grid-row: span 2; color: var(--accent); font-family: Georgia, "Times New Roman", serif; font-size: 18px; text-align: center; }
 .id-verification-panel > p,.verification-file,.verification-note,.verification-pending,.verification-approved { color: var(--text-muted); font-size: 10px; line-height: 1.6; }
+.availability-settings { min-width: 0; padding: 19px; }
+.availability-settings .dashboard-card-heading { margin-bottom: 10px; }
+.availability-settings h2 { margin: 0; color: var(--text); font-family: Georgia, "Times New Roman", serif; font-size: 21px; font-weight: 400; }
+.availability-description,.availability-time-zone { color: var(--text-muted); font-size: 10px; line-height: 1.6; }
+.availability-description { margin: 0 0 10px; }
+.availability-time-zone { margin: 0; }
+.availability-form { display: grid; gap: 9px; }
+.availability-day { display: grid; grid-template-columns: minmax(75px, .7fr) minmax(0, 1.3fr); align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.availability-day > label { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 10px; }
+.availability-day input[type="checkbox"] { accent-color: var(--accent); }
+.availability-time-range { display: flex; align-items: center; gap: 5px; }
+.availability-time-range input { width: 100%; min-width: 0; min-height: 34px; padding: 4px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface); color: var(--text); font: inherit; font-size: 10px; }
+.availability-time-range > span { color: var(--text-muted); font-size: 9px; }
+.availability-form > .primary-action { width: 100%; margin-top: 4px; }
 .verification-upload-form { display: grid; gap: 10px; margin-top: 12px; }
 .verification-upload-form input[type="file"] { width: 100%; padding: 9px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface); color: var(--text); font-size: 10px; }
 .verification-approved { color: #42774f; font-weight: 700; }
@@ -1620,6 +1635,10 @@ html[data-theme="dark"] .admin-shell .dashboard-message.dashboard-notice { borde
 .exchange-schedule-form h4 { margin: 0; color: var(--text); font-family: Georgia, "Times New Roman", serif; font-size: 15px; font-weight: 400; }
 .exchange-schedule-form .dashboard-field { margin: 0; }
 .exchange-availability-row input { min-width: 0; flex: 1; }
+.exchange-availability-sharing { display: grid; gap: 6px; padding: 9px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-muted); }
+.exchange-availability-sharing > p { margin: 0; }
+.exchange-availability-sharing .exchange-availability-row { flex-wrap: wrap; }
+.exchange-availability-sharing a { color: var(--text); }
 .exchange-message-list { display: grid; align-content: start; gap: 7px; max-height: 225px; overflow-y: auto; padding: 3px; }
 .exchange-message { display: grid; max-width: 88%; justify-self: start; gap: 4px; margin: 0; padding: 8px 10px; border-radius: 4px 10px 10px; background: var(--surface-muted); color: var(--text); font-size: 10px; overflow-wrap: anywhere; }
 .exchange-message.mine { justify-self: end; border-radius: 10px 4px 10px 10px; background: #e5efe5; }
