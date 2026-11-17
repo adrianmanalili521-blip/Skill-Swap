@@ -303,8 +303,12 @@ export default function AdminDashboard() {
   const [dateFilter, setDateFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [userSort, setUserSort] = useState("newest");
+  const [categorySort, setCategorySort] = useState<"newest" | "oldest">("newest");
+  const [categoryRequestSort, setCategoryRequestSort] = useState<"newest" | "oldest">("newest");
   const [interval, setInterval] = useState<Interval>("monthly");
   const [page, setPage] = useState(0);
+  const [categoryPage, setCategoryPage] = useState(0);
+  const [categoryRequestPage, setCategoryRequestPage] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [categoryName, setCategoryName] = useState("");
@@ -508,6 +512,30 @@ export default function AdminDashboard() {
   const maxActivity = Math.max(1, ...buckets.flatMap((bucket) => [bucket.users, bucket.listings, bucket.swaps]));
   const maxCategory = Math.max(1, ...topCategories.map(([, count]) => count));
   const pageSize = 20;
+  const sortedCategories = [...filteredCategories].sort((first, second) =>
+    (categorySort === "newest" ? -1 : 1) * (timeOf(first) - timeOf(second)));
+  const pendingCategoryRequests = categoryRequests
+    .filter((request) => request.status === "pending")
+    .sort((first, second) =>
+      (categoryRequestSort === "newest" ? -1 : 1) * (timeOf(first) - timeOf(second)));
+  const currentCategoryPage = Math.min(categoryPage, Math.max(0,
+    Math.ceil(sortedCategories.length / pageSize) - 1));
+  const currentCategoryRequestPage = Math.min(categoryRequestPage, Math.max(0,
+    Math.ceil(pendingCategoryRequests.length / pageSize) - 1));
+  const visibleCategories = sortedCategories.slice(
+    currentCategoryPage * pageSize,
+    (currentCategoryPage + 1) * pageSize,
+  );
+  const visibleCategoryRequests = pendingCategoryRequests.slice(
+    currentCategoryRequestPage * pageSize,
+    (currentCategoryRequestPage + 1) * pageSize,
+  );
+  const currentNotificationPage = Math.min(page, Math.max(0,
+    Math.ceil(notifications.length / pageSize) - 1));
+  const visibleNotifications = notifications.slice(
+    currentNotificationPage * pageSize,
+    (currentNotificationPage + 1) * pageSize,
+  );
 
   function clearMessages() {
     setError(null);
@@ -965,14 +993,19 @@ export default function AdminDashboard() {
     return listings.filter((listing) => listing.ownerId === id).length;
   }
 
-  function renderPagination(total: number) {
+  function renderPagination(
+    total: number,
+    currentPage = page,
+    onPageChange: (nextPage: number) => void = setPage,
+  ) {
     const pages = Math.ceil(total / pageSize);
     if (pages <= 1) return null;
+    const safePage = Math.min(currentPage, pages - 1);
     return <div className="admin-pagination">
-      <span>{page * pageSize + 1}–{Math.min((page + 1) * pageSize, total)} of {total}</span>
+      <span>{safePage * pageSize + 1}–{Math.min((safePage + 1) * pageSize, total)} of {total}</span>
       <div>
-        <button type="button" className="admin-button secondary" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</button>
-        <button type="button" className="admin-button secondary" disabled={page >= pages - 1} onClick={() => setPage((value) => Math.min(pages - 1, value + 1))}>Next</button>
+        <button type="button" className="admin-button secondary" disabled={safePage === 0} onClick={() => onPageChange(Math.max(0, safePage - 1))}>Previous</button>
+        <button type="button" className="admin-button secondary" disabled={safePage >= pages - 1} onClick={() => onPageChange(Math.min(pages - 1, safePage + 1))}>Next</button>
       </div>
     </div>;
   }
@@ -1208,23 +1241,25 @@ export default function AdminDashboard() {
               <div className="admin-row-actions"><button type="submit" className="admin-button primary" disabled={savingId === "category-form"}>{savingId === "category-form" ? "Saving…" : editingCategory ? "Save changes" : "Add category"}</button>
                 {editingCategory && <button type="button" className="admin-button secondary" onClick={() => { setEditingCategory(null); setCategoryName(""); setCategoryDescription(""); }}>Cancel</button>}</div>
             </form>
-            <div className="admin-subsection"><h3>Member category requests</h3>
-              {categoryRequests.filter((request) => request.status === "pending").length ? categoryRequests.filter((request) => request.status === "pending").map((request) => <article className="admin-request-card" key={request.id}>
+            <div className="admin-subsection"><div className="admin-panel-heading"><h3>Member category requests</h3><select aria-label="Sort category requests" value={categoryRequestSort} onChange={(event) => { setCategoryRequestSort(event.target.value as typeof categoryRequestSort); setCategoryRequestPage(0); }}><option value="newest">Latest first</option><option value="oldest">Oldest first</option></select></div>
+              {pendingCategoryRequests.length ? visibleCategoryRequests.map((request) => <article className="admin-request-card" key={request.id}>
                 <div><strong>{request.name}</strong><small>By {request.requesterName || request.requesterId}</small>{request.reason && <p>{request.reason}</p>}</div>
                 <div className="admin-row-actions"><button className="admin-button danger" type="button" disabled={savingId === request.id} onClick={() => void setCategoryRequestStatus(request, "declined")}>Decline</button><button className="admin-button primary" type="button" disabled={savingId === request.id} onClick={() => void setCategoryRequestStatus(request, "approved")}>Approve</button></div>
               </article>) : <p className="admin-muted">No pending category requests.</p>}
+              {renderPagination(pendingCategoryRequests.length, currentCategoryRequestPage, setCategoryRequestPage)}
             </div>
           </section>
           <section className="admin-panel admin-table-panel"><div className="admin-panel-heading"><div><h2>Custom categories</h2><p>Listing counts include all listing statuses.</p></div>
-            <select aria-label="Filter categories by status" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(0); }}><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>
+            <div className="admin-row-actions"><select aria-label="Filter categories by status" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setCategoryPage(0); }}><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select><select aria-label="Sort categories" value={categorySort} onChange={(event) => { setCategorySort(event.target.value as typeof categorySort); setCategoryPage(0); }}><option value="newest">Latest first</option><option value="oldest">Oldest first</option></select></div>
           </div>
-          {filteredCategories.length ? <div className="admin-category-list">{filteredCategories.map((category) => {
+          {sortedCategories.length ? <div className="admin-category-list">{visibleCategories.map((category) => {
             const count = listings.filter((listing) => listing.category?.toLowerCase() === category.name.toLowerCase()).length;
             return <article className="admin-category-item" key={category.id}><div><strong>{category.name}</strong><p>{category.description || "No description"}</p><small>{count} listings · {category.status}</small></div>
               <div className="admin-row-actions"><button type="button" className="admin-button secondary" onClick={() => { setEditingCategory(category); setCategoryName(category.name); setCategoryDescription(category.description ?? ""); }}>Edit</button>
                 <button type="button" className="admin-button secondary" disabled={savingId === category.id} onClick={() => void setCategoryStatus(category, category.status === "active" ? "inactive" : "active")}>{category.status === "active" ? "Deactivate" : "Activate"}</button>
                 <button type="button" className="admin-button danger" disabled={savingId === category.id} onClick={() => void deleteCategory(category)}>Remove</button></div></article>;
           })}</div> : <div className="admin-empty">No custom categories yet. Built-in categories are maintained in the member app.</div>}
+          {renderPagination(sortedCategories.length, currentCategoryPage, setCategoryPage)}
         </section></div>}
 
         {!loadingData && section === "verification" && <section className="admin-panel verification-admin-panel">
@@ -1291,10 +1326,11 @@ export default function AdminDashboard() {
 
         {!loadingData && section === "notifications" && <section className="admin-panel admin-table-panel">
           <div className="admin-panel-heading"><div><h2>Admin notifications</h2><p>Notifications delivered to your administrator account.</p></div><button type="button" className="admin-button secondary" disabled={savingId === "notifications" || !notifications.some((item) => !item.read)} onClick={() => void markAllNotificationsRead()}>Mark all read</button></div>
-          {notifications.length ? <div className="admin-notification-list">{notifications.map((notification) => <article className={notification.read ? "admin-notification" : "admin-notification unread"} key={notification.id}>
+          {notifications.length ? <div className="admin-notification-list">{visibleNotifications.map((notification) => <article className={notification.read ? "admin-notification" : "admin-notification unread"} key={notification.id}>
             <span className="admin-notification-mark">{notification.read ? "○" : "●"}</span><div><strong>{notification.kind.replaceAll("_", " ")}</strong><p>Related record: {notification.requestId} · From {memberById.get(notification.actorId)?.displayName || notification.actorId}</p><small>{formatDate(notification.createdAt)}</small></div>
             {!notification.read && <button type="button" className="admin-text-button" disabled={savingId === notification.id} onClick={() => void markNotificationRead(notification)}>Mark read</button>}
           </article>)}</div> : <div className="admin-empty">No notifications have been delivered to this account.</div>}
+          {renderPagination(notifications.length, currentNotificationPage)}
         </section>}
 
         {!loadingData && section === "analytics" && <section className="admin-panel admin-chart-panel">
