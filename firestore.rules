@@ -37,12 +37,54 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isActiveUser() || isOwner(userId);
       allow create: if isOwner(userId)
+                    && request.resource.data.keys().hasOnly([
+                      'uid', 'displayName', 'email', 'photoURL', 'bio', 'skillsOffered',
+                      'learningGoals', 'role', 'status', 'rating', 'ratingCount',
+                      'completedExchangeCount', 'sentRequestCount', 'receivedRequestCount',
+                      'verified', 'theme', 'createdAt', 'updatedAt'
+                    ])
+                    && request.resource.data.keys().hasAll([
+                      'uid', 'displayName', 'email', 'photoURL', 'bio', 'skillsOffered',
+                      'learningGoals', 'role', 'status', 'rating', 'ratingCount',
+                      'completedExchangeCount', 'sentRequestCount', 'receivedRequestCount',
+                      'verified', 'theme', 'createdAt', 'updatedAt'
+                    ])
                     && request.resource.data.uid == userId
                     && request.resource.data.role == 'user'
-                    && request.resource.data.get('status', 'active') == 'active'; // clients can never self-assign admin or status
+                    && request.resource.data.status == 'active'
+                    && request.resource.data.displayName is string
+                    && request.resource.data.displayName.size() <= 100
+                    && request.resource.data.email is string
+                    && request.resource.data.email.size() <= 320
+                    && (request.resource.data.photoURL is string || request.resource.data.photoURL == null)
+                    && request.resource.data.bio is string
+                    && request.resource.data.bio.size() <= 280
+                    && request.resource.data.skillsOffered is list
+                    && request.resource.data.skillsOffered.size() <= 50
+                    && request.resource.data.learningGoals is list
+                    && request.resource.data.learningGoals.size() <= 50
+                    && request.resource.data.get('rating', 0) == 0
+                    && request.resource.data.get('ratingCount', 0) == 0
+                    && request.resource.data.get('completedExchangeCount', 0) == 0
+                    && request.resource.data.get('sentRequestCount', 0) == 0
+                    && request.resource.data.get('receivedRequestCount', 0) == 0
+                    && request.resource.data.get('verified', false) == false
+                    && request.resource.data.theme in ['light', 'dark']
+                    && request.resource.data.createdAt is timestamp
+                    && request.resource.data.updatedAt is timestamp;
       allow update: if (
                       isOwner(userId)
                       && isActiveUser()
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['bio', 'skillsOffered', 'learningGoals', 'theme', 'updatedAt'])
+                      && request.resource.data.bio is string
+                      && request.resource.data.bio.size() <= 280
+                      && request.resource.data.skillsOffered is list
+                      && request.resource.data.skillsOffered.size() <= 50
+                      && request.resource.data.learningGoals is list
+                      && request.resource.data.learningGoals.size() <= 50
+                      && request.resource.data.theme in ['light', 'dark']
+                      && request.resource.data.updatedAt is timestamp
                       && request.resource.data.role == resource.data.role
                       && request.resource.data.get('status', 'active') == resource.data.get('status', 'active')
                     ) || (
@@ -54,7 +96,32 @@ service cloud.firestore {
                         request.resource.data.status == 'active'
                         || (resource.data.role != 'admin' && userId != request.auth.uid)
                       )
-                    );
+                      ) || (
+                        isAdmin()
+                        && userId != request.auth.uid
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'updatedAt'])
+                        && request.resource.data.role in ['user', 'admin']
+                        && request.resource.data.get('status', 'active') == resource.data.get('status', 'active')
+                        && request.resource.data.updatedAt is timestamp
+                      ) || (
+                        isAdmin()
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verified', 'updatedAt'])
+                        && request.resource.data.verified is bool
+                        && request.resource.data.updatedAt is timestamp
+                        && existsAfter(/databases/$(database)/documents/idVerifications/$(userId))
+                        && (
+                          (
+                            request.resource.data.verified == true
+                            && getAfter(/databases/$(database)/documents/idVerifications/$(userId)).data.status
+                              == 'approved'
+                          )
+                          || (
+                            request.resource.data.verified == false
+                            && getAfter(/databases/$(database)/documents/idVerifications/$(userId)).data.status
+                              == 'rejected'
+                          )
+                        )
+                      );
       allow delete: if isAdmin();
     }
 
@@ -66,15 +133,58 @@ service cloud.firestore {
       allow read: if isActiveUser();
       allow create: if isActiveUser()
                     && !isAdmin()
-                    && request.resource.data.ownerId == request.auth.uid;
+                    && request.resource.data.keys().hasOnly([
+                      'ownerId', 'ownerName', 'title', 'description', 'category',
+                      'level', 'tags', 'status', 'requestCount', 'createdAt', 'updatedAt'
+                    ])
+                    && request.resource.data.ownerId == request.auth.uid
+                    && request.resource.data.ownerName is string
+                    && request.resource.data.ownerName.size() <= 100
+                    && request.resource.data.title is string
+                    && request.resource.data.title.size() >= 2
+                    && request.resource.data.title.size() <= 70
+                    && request.resource.data.description is string
+                    && request.resource.data.description.size() <= 500
+                    && request.resource.data.category is string
+                    && request.resource.data.category.size() >= 2
+                    && request.resource.data.category.size() <= 40
+                    && request.resource.data.level in ['beginner', 'intermediate', 'advanced']
+                    && request.resource.data.tags is list
+                    && request.resource.data.tags.size() <= 20
+                    && request.resource.data.status == 'active'
+                    && request.resource.data.requestCount == 0
+                    && request.resource.data.createdAt is timestamp
+                    && request.resource.data.updatedAt is timestamp;
       allow update: if (isOwner(resource.data.ownerId)
                && isActiveUser()
                && !isAdmin()
-               && request.resource.data.ownerId == resource.data.ownerId)
+               && request.resource.data.ownerId == resource.data.ownerId
+               && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                 'ownerName', 'title', 'description', 'category', 'level', 'tags',
+                 'status', 'updatedAt'
+               ])
+               && request.resource.data.ownerName is string
+               && request.resource.data.ownerName.size() <= 100
+               && request.resource.data.title is string
+               && request.resource.data.title.size() >= 2
+               && request.resource.data.title.size() <= 70
+               && request.resource.data.description is string
+               && request.resource.data.description.size() <= 500
+               && request.resource.data.category is string
+               && request.resource.data.category.size() >= 2
+               && request.resource.data.category.size() <= 40
+               && request.resource.data.level in ['beginner', 'intermediate', 'advanced']
+               && request.resource.data.tags is list
+               && request.resource.data.tags.size() <= 20
+               && request.resource.data.status in ['active', 'paused']
+               && request.resource.data.updatedAt is timestamp)
             || (
               isAdmin()
-              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'category'])
               && request.resource.data.status in ['active', 'paused', 'removed']
+              && request.resource.data.category is string
+              && request.resource.data.category.size() >= 2
+              && request.resource.data.category.size() <= 40
               && request.resource.data.updatedAt is timestamp
             );
       allow delete: if (isOwner(resource.data.ownerId) && isActiveUser() && !isAdmin()) || isAdmin();
@@ -118,6 +228,111 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ---------- categories/{categoryId} ----------
+    // Custom categories supplement the built-in categories in the member app.
+    match /categories/{categoryId} {
+      allow read: if isAdmin() || isActiveUser();
+      allow create: if isAdmin()
+                    && request.resource.data.keys().hasOnly([
+                      'name', 'description', 'status', 'createdAt', 'updatedAt'
+                    ])
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() >= 2
+                    && request.resource.data.name.size() <= 40
+                    && request.resource.data.description is string
+                    && request.resource.data.description.size() <= 300
+                    && request.resource.data.status == 'active'
+                    && request.resource.data.createdAt is timestamp
+                    && request.resource.data.updatedAt is timestamp;
+      allow update: if isAdmin()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['name', 'description', 'status', 'updatedAt'])
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() >= 2
+                    && request.resource.data.name.size() <= 40
+                    && request.resource.data.description is string
+                    && request.resource.data.description.size() <= 300
+                    && request.resource.data.status in ['active', 'inactive']
+                    && request.resource.data.updatedAt is timestamp;
+      allow delete: if isAdmin();
+    }
+
+    // ---------- reports/{reportId} ----------
+    // Members can submit a report about another account or listing. Only admins
+    // can inspect reports or write moderation decisions.
+    match /reports/{reportId} {
+      allow read: if isAdmin();
+      allow create: if isActiveUser()
+                    && !isAdmin()
+                    && request.resource.data.keys().hasOnly([
+                      'reporterId', 'reporterName', 'targetType', 'targetId',
+                      'reason', 'status', 'createdAt', 'updatedAt'
+                    ])
+                    && request.resource.data.reporterId == request.auth.uid
+                    && request.resource.data.reporterName is string
+                    && request.resource.data.reporterName.size() <= 100
+                    && request.resource.data.reason is string
+                    && request.resource.data.reason.size() >= 10
+                    && request.resource.data.reason.size() <= 1000
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.createdAt is timestamp
+                    && request.resource.data.updatedAt is timestamp
+                    && (
+                      (
+                        request.resource.data.targetType == 'user'
+                        && request.resource.data.targetId is string
+                        && request.resource.data.targetId != request.auth.uid
+                        && exists(/databases/$(database)/documents/users/$(request.resource.data.targetId))
+                      )
+                      || (
+                        request.resource.data.targetType == 'listing'
+                        && request.resource.data.targetId is string
+                        && exists(/databases/$(database)/documents/skills/$(request.resource.data.targetId))
+                        && get(/databases/$(database)/documents/skills/$(request.resource.data.targetId)).data.ownerId
+                          != request.auth.uid
+                      )
+                    );
+      allow update: if isAdmin()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                      'status', 'resolutionNote', 'moderatorId', 'moderatorName', 'updatedAt'
+                    ])
+                    && request.resource.data.status in ['pending', 'under_review', 'resolved', 'dismissed']
+                    && request.resource.data.resolutionNote is string
+                    && request.resource.data.resolutionNote.size() <= 500
+                    && request.resource.data.moderatorId == request.auth.uid
+                    && request.resource.data.moderatorName is string
+                    && request.resource.data.moderatorName.size() <= 100
+                    && request.resource.data.updatedAt is timestamp;
+      allow delete: if false;
+    }
+
+    // ---------- adminActivityLogs/{logId} ----------
+    // Append-only administrator audit records; writes are atomic with the
+    // corresponding administrative operation in the web client.
+    match /adminActivityLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+                    && request.resource.data.keys().hasOnly([
+                      'actorId', 'actorName', 'action', 'entityType', 'entityId',
+                      'summary', 'before', 'after', 'createdAt'
+                    ])
+                    && request.resource.data.actorId == request.auth.uid
+                    && request.resource.data.actorName is string
+                    && request.resource.data.actorName.size() <= 100
+                    && request.resource.data.action is string
+                    && request.resource.data.action.size() <= 50
+                    && request.resource.data.entityType is string
+                    && request.resource.data.entityType.size() <= 40
+                    && request.resource.data.entityId is string
+                    && request.resource.data.entityId.size() <= 150
+                    && request.resource.data.summary is string
+                    && request.resource.data.summary.size() <= 300
+                    && (request.resource.data.before is map || request.resource.data.before == null)
+                    && (request.resource.data.after is map || request.resource.data.after == null)
+                    && request.resource.data.createdAt is timestamp;
+      allow update, delete: if false;
+    }
+
     // ---------- swapRequests/{requestId} ----------
     // Only the two participants (sender/receiver) can read a request.
     // Senders may cancel pending requests; recipients may accept or decline.
@@ -143,6 +358,9 @@ service cloud.firestore {
                     && get(/databases/$(database)/documents/skills/$(request.resource.data.skillId)).data.ownerId
                       == request.resource.data.toUserId
                     && get(/databases/$(database)/documents/skills/$(request.resource.data.skillId)).data.status
+                      == 'active'
+                    && exists(/databases/$(database)/documents/users/$(request.resource.data.toUserId))
+                    && get(/databases/$(database)/documents/users/$(request.resource.data.toUserId)).data.get('status', 'active')
                       == 'active'
                     && request.resource.data.message is string
                     && request.resource.data.message.size() <= 500
@@ -188,9 +406,42 @@ service cloud.firestore {
                           && request.resource.data.offeredSkillId == resource.data.offeredSkillId
                         )
                       )
+                    ) || (
+                      isParticipant(resource.data)
+                      && isActiveUser()
+                      && !isAdmin()
+                      && resource.data.status == 'accepted'
+                      && request.resource.data.status == resource.data.status
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['scheduledAt', 'scheduleTimeZone', 'scheduleNote', 'updatedAt'])
+                      && (request.resource.data.scheduledAt is timestamp
+                        || request.resource.data.scheduledAt == null)
+                      && request.resource.data.scheduleTimeZone is string
+                      && request.resource.data.scheduleTimeZone.size() <= 80
+                      && request.resource.data.scheduleNote is string
+                      && request.resource.data.scheduleNote.size() <= 240
+                      && request.resource.data.updatedAt is timestamp
+                    ) || (
+                      isParticipant(resource.data)
+                      && isActiveUser()
+                      && !isAdmin()
+                      && resource.data.status == 'accepted'
+                      && request.resource.data.status == 'completed'
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['status', 'updatedAt'])
+                      && request.resource.data.updatedAt is timestamp
+                    ) || (
+                      isAdmin()
+                      && resource.data.status == 'pending'
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+                      && request.resource.data.status == 'cancelled'
+                      && request.resource.data.updatedAt is timestamp
                     );
 
-      allow delete: if isActiveUser() && !isAdmin() && isParticipant(resource.data);
+      allow delete: if isActiveUser()
+                    && !isAdmin()
+                    && isParticipant(resource.data)
+                    && resource.data.status in ['pending', 'declined', 'cancelled'];
     }
 
     // ---------- notifications/{notificationId} ----------
@@ -265,14 +516,133 @@ service cloud.firestore {
     }
 
     // ---------- reviews/{reviewId} ----------
-    // Optional: left after a completed swap. Public read, only the author
-    // can create, no edits after posting (simplest anti-abuse rule).
+    // A participant may review the other participant once after completion.
     match /reviews/{reviewId} {
       allow read: if isActiveUser();
       allow create: if isActiveUser()
-                    && request.resource.data.authorId == request.auth.uid;
+                    && request.resource.data.keys().hasOnly([
+                      'swapRequestId', 'authorId', 'targetUserId', 'rating', 'comment', 'createdAt'
+                    ])
+                    && request.resource.data.authorId == request.auth.uid
+                    && request.resource.data.targetUserId is string
+                    && request.resource.data.targetUserId != request.auth.uid
+                    && request.resource.data.swapRequestId is string
+                    && reviewId == request.resource.data.swapRequestId + '_' + request.auth.uid
+                    && request.resource.data.rating is int
+                    && request.resource.data.rating >= 1
+                    && request.resource.data.rating <= 5
+                    && request.resource.data.comment is string
+                    && request.resource.data.comment.size() <= 500
+                    && request.resource.data.createdAt is timestamp
+                    && exists(/databases/$(database)/documents/swapRequests/$(request.resource.data.swapRequestId))
+                    && get(/databases/$(database)/documents/swapRequests/$(request.resource.data.swapRequestId)).data.status
+                      == 'completed'
+                    && isParticipant(get(/databases/$(database)/documents/swapRequests/$(request.resource.data.swapRequestId)).data)
+                    && (
+                      (
+                        get(/databases/$(database)/documents/swapRequests/$(request.resource.data.swapRequestId)).data.fromUserId
+                          == request.auth.uid
+                        && get(/databases/$(database)/documents/swapRequests/$(request.resource.data.swapRequestId)).data.toUserId
+                          == request.resource.data.targetUserId
+                      )
+                      || (
+                        get(/databases/$(database)/documents/swapRequests/$(request.resource.data.swapRequestId)).data.toUserId
+                          == request.auth.uid
+                        && get(/databases/$(database)/documents/swapRequests/$(request.resource.data.swapRequestId)).data.fromUserId
+                          == request.resource.data.targetUserId
+                      )
+                    );
       allow update: if false;
-      allow delete: if (isOwner(resource.data.authorId) && isActiveUser()) || isAdmin();
+      allow delete: if false;
+    }
+
+    // ---------- private identity verification records ----------
+    match /idVerifications/{userId} {
+      allow read: if isAdmin() || (isActiveUser() && isOwner(userId));
+      allow create: if isActiveUser()
+                    && isOwner(userId)
+                    && request.resource.data.keys().hasOnly([
+                      'userId', 'storagePath', 'documentName', 'contentType', 'sizeBytes',
+                      'status', 'storageDeleted', 'reviewNote', 'createdAt', 'updatedAt'
+                    ])
+                    && request.resource.data.userId == userId
+                    && request.resource.data.storagePath.matches('identityDocuments/' + userId + '/[^/]+')
+                    && request.resource.data.documentName is string
+                    && request.resource.data.documentName.size() <= 120
+                    && request.resource.data.contentType in ['image/jpeg', 'image/png', 'application/pdf']
+                    && request.resource.data.sizeBytes is int
+                    && request.resource.data.sizeBytes > 0
+                    && request.resource.data.sizeBytes <= 10485760
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.storageDeleted == false
+                    && request.resource.data.reviewNote == ''
+                    && request.resource.data.createdAt is timestamp
+                    && request.resource.data.updatedAt is timestamp;
+      allow update: if (
+                      isActiveUser()
+                      && isOwner(userId)
+                      && resource.data.status == 'rejected'
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'storagePath', 'documentName', 'contentType', 'sizeBytes',
+                        'status', 'storageDeleted', 'reviewNote', 'updatedAt'
+                      ])
+                      && request.resource.data.storagePath.matches('identityDocuments/' + userId + '/[^/]+')
+                      && request.resource.data.documentName is string
+                      && request.resource.data.documentName.size() <= 120
+                      && request.resource.data.contentType in ['image/jpeg', 'image/png', 'application/pdf']
+                      && request.resource.data.sizeBytes is int
+                      && request.resource.data.sizeBytes > 0
+                      && request.resource.data.sizeBytes <= 10485760
+                      && request.resource.data.status == 'pending'
+                      && request.resource.data.storageDeleted == false
+                      && request.resource.data.reviewNote == ''
+                      && request.resource.data.updatedAt is timestamp
+                    ) || (
+                      isAdmin()
+                      && resource.data.status in ['approved', 'rejected']
+                      && resource.data.get('storageDeleted', false) == false
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['storageDeleted', 'updatedAt'])
+                      && request.resource.data.storageDeleted == true
+                      && request.resource.data.updatedAt is timestamp
+                    ) || (
+                      isAdmin()
+                      && resource.data.status == 'pending'
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'status', 'reviewNote', 'reviewerId', 'reviewerName', 'reviewedAt', 'updatedAt',
+                        'storageDeleted'
+                      ])
+                      && request.resource.data.status in ['approved', 'rejected']
+                      && request.resource.data.reviewNote is string
+                      && request.resource.data.reviewNote.size() <= 500
+                      && request.resource.data.reviewerId == request.auth.uid
+                      && request.resource.data.reviewerName is string
+                      && request.resource.data.reviewerName.size() <= 100
+                      && request.resource.data.reviewedAt is timestamp
+                      && request.resource.data.storageDeleted == false
+                      && request.resource.data.updatedAt is timestamp
+                    );
+      allow delete: if false;
+    }
+
+    match /swapRequests/{requestId}/messages/{messageId} {
+      function exchangeIsActive() {
+        return exists(/databases/$(database)/documents/swapRequests/$(requestId))
+          && get(/databases/$(database)/documents/swapRequests/$(requestId)).data.status
+            in ['accepted', 'completed']
+          && isParticipant(get(/databases/$(database)/documents/swapRequests/$(requestId)).data);
+      }
+
+      allow read: if isActiveUser() && exchangeIsActive();
+      allow create: if isActiveUser()
+                    && exchangeIsActive()
+                    && request.resource.data.keys().hasOnly(['senderId', 'text', 'createdAt'])
+                    && request.resource.data.senderId == request.auth.uid
+                    && request.resource.data.text is string
+                    && request.resource.data.text.size() > 0
+                    && request.resource.data.text.size() <= 2000
+                    && request.resource.data.createdAt is timestamp;
+      allow update, delete: if false;
     }
 
     // Deny everything else by default.

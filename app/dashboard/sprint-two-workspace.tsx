@@ -11,7 +11,6 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -23,6 +22,7 @@ import { getAuthErrorMessage } from "@/lib/auth-errors";
 import { db } from "@/lib/firebase";
 import { useTheme } from "@/lib/theme-context";
 import { getRecentMonths, timestampMonthKey } from "@/lib/analytics";
+import { CommunityRankings, ExchangeWorkspace, IdVerificationForm } from "./enhancement-panels";
 
 type View = "discover" | "listings" | "requests" | "analytics" | "profile";
 type SkillLevel = "beginner" | "intermediate" | "advanced";
@@ -36,6 +36,10 @@ interface UserProfile {
   learningGoals?: string[];
   rating?: number;
   ratingCount?: number;
+  verified?: boolean;
+  completedExchangeCount?: number;
+  sentRequestCount?: number;
+  receivedRequestCount?: number;
 }
 
 interface SkillListing {
@@ -48,6 +52,7 @@ interface SkillListing {
   level: SkillLevel;
   tags: string[];
   status: "active" | "paused" | "removed";
+  requestCount?: number;
   createdAt?: { toMillis?: () => number };
 }
 
@@ -84,6 +89,7 @@ interface SwapRequestSnapshotState {
 }
 
 const defaultCategories = ["Art & Design", "Business", "Cooking", "Crafts", "Language", "Music", "Technology", "Wellness", "Other"];
+const DISCOVERY_PAGE_SIZE = 12;
 
 function parseList(value: string) {
   return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
@@ -109,6 +115,8 @@ export default function SprintTwoWorkspace() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [listings, setListings] = useState<SkillListing[]>([]);
   const [approvedCategories, setApprovedCategories] = useState<string[]>([]);
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [inactiveCategories, setInactiveCategories] = useState<string[]>([]);
   const [requestSnapshot, setRequestSnapshot] = useState<SwapRequestSnapshotState>({
     userId: null,
     incoming: [],
@@ -129,6 +137,8 @@ export default function SprintTwoWorkspace() {
   const [goalsText, setGoalsText] = useState("");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All categories");
+  const [discoverySort, setDiscoverySort] = useState<"newest" | "oldest" | "popular" | "title">("newest");
+  const [discoveryPage, setDiscoveryPage] = useState(0);
   const [editing, setEditing] = useState<SkillListing | null>(null);
   const [showEditor, setShowEditor] = useState(false);
   const [showCategoryRequestForm, setShowCategoryRequestForm] = useState(false);
@@ -157,22 +167,14 @@ export default function SprintTwoWorkspace() {
       setLoadingData(true);
       setError(null);
       try {
-        const [profileSnapshot, activeSkillsSnapshot, ownSkillsSnapshot] = await Promise.all([
-          getDoc(doc(db, "users", currentUser.uid)),
-          getDocs(query(collection(db, "skills"), where("status", "==", "active"), orderBy("createdAt", "desc"))),
-          getDocs(query(collection(db, "skills"), where("ownerId", "==", currentUser.uid))),
-        ]);
+        const profileSnapshot = await getDoc(doc(db, "users", currentUser.uid));
         if (!profileSnapshot.exists()) throw new Error("Your profile is missing. Sign out and sign in again.");
         const nextProfile = profileSnapshot.data() as UserProfile;
-        const skillDocs = new Map(activeSkillsSnapshot.docs.map((skillDoc) => [skillDoc.id, skillDoc]));
-        ownSkillsSnapshot.docs.forEach((skillDoc) => skillDocs.set(skillDoc.id, skillDoc));
-        const nextListings = [...skillDocs.values()].map((skillDoc) => ({ id: skillDoc.id, ...skillDoc.data() }) as SkillListing);
         if (!active) return;
         setProfile(nextProfile);
         setBio(nextProfile.bio ?? "");
         setSkillsText((nextProfile.skillsOffered ?? []).join(", "));
         setGoalsText((nextProfile.learningGoals ?? []).join(", "));
-        setListings(nextListings.sort((first, second) => createdTime(second) - createdTime(first)));
       } catch (loadError) {
         if (active) setError(getAuthErrorMessage(loadError));
       } finally {
@@ -181,6 +183,66 @@ export default function SprintTwoWorkspace() {
     }
     void loadDashboard();
     return () => { active = false; };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const activeSkills = new Map<string, SkillListing>();
+    const ownSkills = new Map<string, SkillListing>();
+    const publishListings = () => {
+      const merged = new Map(activeSkills);
+      ownSkills.forEach((listing, id) => merged.set(id, listing));
+      setListings([...merged.values()].sort((first, second) => createdTime(second) - createdTime(first)));
+    };
+    const handleError = (listenerError: Error) => {
+      setError(`Unable to stream skill listings: ${getAuthErrorMessage(listenerError)}`);
+    };
+    const unsubscribeActive = onSnapshot(
+      query(collection(db, "skills"), where("status", "==", "active")),
+      (snapshot) => {
+        activeSkills.clear();
+        snapshot.docs.forEach((skillDoc) => activeSkills.set(skillDoc.id, {
+          id: skillDoc.id,
+          ...skillDoc.data(),
+        } as SkillListing));
+        publishListings();
+      },
+      handleError,
+    );
+    const unsubscribeOwn = onSnapshot(
+      query(collection(db, "skills"), where("ownerId", "==", user.uid)),
+      (snapshot) => {
+        ownSkills.clear();
+        snapshot.docs.forEach((skillDoc) => ownSkills.set(skillDoc.id, {
+          id: skillDoc.id,
+          ...skillDoc.data(),
+        } as SkillListing));
+        publishListings();
+      },
+      handleError,
+    );
+    return () => {
+      unsubscribeActive();
+      unsubscribeOwn();
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(
+      collection(db, "categories"),
+      (snapshot) => {
+        setCustomCategories(snapshot.docs
+          .filter((categoryDoc) => categoryDoc.data().status === "active")
+          .map((categoryDoc) => String(categoryDoc.data().name ?? "").trim())
+          .filter(Boolean));
+        setInactiveCategories(snapshot.docs
+          .filter((categoryDoc) => categoryDoc.data().status === "inactive")
+          .map((categoryDoc) => String(categoryDoc.data().name ?? "").trim())
+          .filter(Boolean));
+      },
+      (listenerError) => setError(`Unable to load custom categories: ${getAuthErrorMessage(listenerError)}`),
+    );
   }, [user]);
 
   useEffect(() => {
@@ -351,7 +413,9 @@ export default function SprintTwoWorkspace() {
   const categories = useMemo(
     () => {
       const uniqueCategories = new Map<string, string>();
-      [...defaultCategories, ...approvedCategories].forEach((name) => {
+      [...defaultCategories, ...approvedCategories, ...customCategories]
+        .filter((name) => !inactiveCategories.some((inactiveName) => inactiveName.toLowerCase() === name.trim().toLowerCase()))
+        .forEach((name) => {
         const normalizedName = name.trim().toLowerCase();
         if (normalizedName && !uniqueCategories.has(normalizedName)) {
           uniqueCategories.set(normalizedName, name.trim());
@@ -359,7 +423,7 @@ export default function SprintTwoWorkspace() {
       });
       return [...uniqueCategories.values()];
     },
-    [approvedCategories],
+    [approvedCategories, customCategories, inactiveCategories],
   );
   const discoveredListings = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -370,6 +434,20 @@ export default function SprintTwoWorkspace() {
         .some((text) => text?.toLowerCase().includes(term));
     });
   }, [category, listings, search, user?.uid]);
+  const sortedDiscoveredListings = useMemo(() => [...discoveredListings].sort((first, second) => {
+    if (discoverySort === "popular") {
+      return (second.requestCount ?? 0) - (first.requestCount ?? 0) || createdTime(second) - createdTime(first);
+    }
+    if (discoverySort === "oldest") return createdTime(first) - createdTime(second);
+    if (discoverySort === "title") return first.title.localeCompare(second.title);
+    return createdTime(second) - createdTime(first);
+  }), [discoveredListings, discoverySort]);
+  const discoveryPageCount = Math.ceil(sortedDiscoveredListings.length / DISCOVERY_PAGE_SIZE);
+  const currentDiscoveryPage = Math.min(discoveryPage, Math.max(0, discoveryPageCount - 1));
+  const visibleDiscoveredListings = sortedDiscoveredListings.slice(
+    currentDiscoveryPage * DISCOVERY_PAGE_SIZE,
+    (currentDiscoveryPage + 1) * DISCOVERY_PAGE_SIZE,
+  );
   const requestSnapshotIsCurrent = requestSnapshot.userId === user?.uid;
   const incomingRequests = requestSnapshotIsCurrent ? requestSnapshot.incoming : [];
   const outgoingRequests = requestSnapshotIsCurrent ? requestSnapshot.outgoing : [];
@@ -431,7 +509,7 @@ export default function SprintTwoWorkspace() {
         setListings((current) => current.map((item) => item.id === editing.id ? { ...item, ...data } : item));
         setNotice("Listing updated.");
       } else {
-        const created = await addDoc(collection(db, "skills"), { ...data, createdAt: serverTimestamp() });
+        const created = await addDoc(collection(db, "skills"), { ...data, requestCount: 0, createdAt: serverTimestamp() });
         setListings((current) => [{ id: created.id, ...data }, ...current]);
         setNotice("Listing published.");
       }
@@ -663,18 +741,26 @@ export default function SprintTwoWorkspace() {
         <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? isAdmin ? "Explore community skills." : "Find your next exchange." : view === "listings" ? "Share what you know." : view === "requests" ? "Make an exchange happen." : view === "analytics" ? "Your activity at a glance." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? isAdmin ? "Browse skills shared by your community." : "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : view === "requests" ? "Track the requests you send and the offers you receive." : view === "analytics" ? "Review your listings, swap requests, and activity over the last six months." : "A good exchange starts with a little context about you."}</p></section>
         {error && <p className="dashboard-message dashboard-error" role="alert">{error}</p>}{notice && <p className="dashboard-message dashboard-notice" role="status">{notice}</p>}
 
+        {view === "profile" && <section className="profile-counter-grid" aria-label="Your community activity">
+          <article className="analytics-stat"><span>Completed exchanges</span><strong>{profile?.completedExchangeCount ?? 0}</strong></article>
+          <article className="analytics-stat"><span>Requests sent</span><strong>{profile?.sentRequestCount ?? outgoingRequests.length}</strong></article>
+          <article className="analytics-stat"><span>Requests received</span><strong>{profile?.receivedRequestCount ?? incomingRequests.length}</strong></article>
+        </section>}
+        {view === "profile" && <div className="profile-enhancements"><CommunityRankings /><IdVerificationForm /></div>}
+
         {view === "discover" && <section aria-label="Discover skills">
-          <div className="discover-tools"><label className="search-field"><span className="search-icon" aria-hidden="true">⌕</span><span className="visually-hidden">Search skills, tags, or people</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search skills, tags, or people" /></label><label className="category-filter"><span className="visually-hidden">Filter by category</span><select value={category} onChange={(event) => setCategory(event.target.value)}><option>All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></label>{!isAdmin && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); setView("listings"); }}><span aria-hidden="true">＋</span> Offer a skill</button>}</div>
+          <div className="discover-tools"><label className="search-field"><span className="search-icon" aria-hidden="true">⌕</span><span className="visually-hidden">Search skills, tags, or people</span><input value={search} onChange={(event) => { setSearch(event.target.value); setDiscoveryPage(0); }} placeholder="Search skills, tags, or people" /></label><label className="category-filter"><span className="visually-hidden">Filter by category</span><select value={category} onChange={(event) => { setCategory(event.target.value); setDiscoveryPage(0); }}><option>All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label className="category-filter"><span className="visually-hidden">Sort listings</span><select value={discoverySort} onChange={(event) => { setDiscoverySort(event.target.value as typeof discoverySort); setDiscoveryPage(0); }}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="popular">Most requested</option><option value="title">Title A–Z</option></select></label>{!isAdmin && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); setView("listings"); }}><span aria-hidden="true">＋</span> Offer a skill</button>}</div>
           {!isAdmin && <div className="category-request-entry"><button className="text-action" type="button" onClick={() => setShowCategoryRequestForm((shown) => !shown)}>{showCategoryRequestForm ? "Close category request" : "Request a category"}</button></div>}
           {!isAdmin && showCategoryRequestForm && <form className="skill-editor category-request-form" onSubmit={(event) => void sendCategoryRequest(event)}><h2>Suggest a category</h2><label className="dashboard-field"><span>Category name</span><input value={categoryRequestName} onChange={(event) => setCategoryRequestName(event.target.value)} minLength={2} maxLength={40} required placeholder="e.g. Gardening" /></label><label className="dashboard-field"><span>Why should we add it? <small>Optional</small></span><textarea value={categoryRequestReason} onChange={(event) => setCategoryRequestReason(event.target.value)} maxLength={500} rows={3} placeholder="Tell the admin what skills this category would cover." /></label><div className="editor-actions"><button className="primary-action" type="submit" disabled={sendingCategoryRequest}>{sendingCategoryRequest ? "Sending..." : "Send category request"}</button></div></form>}
           <div className="results-heading"><h2>Community skills</h2><span>{loadingData ? "Loading..." : `${discoveredListings.length} ${discoveredListings.length === 1 ? "listing" : "listings"}`}</span></div>
-          {loadingData ? <div className="empty-state">Loading skills...</div> : discoveredListings.length ? <div className="skill-grid">{discoveredListings.map((listing, index) => {
+          {loadingData ? <div className="empty-state">Loading skills...</div> : discoveredListings.length ? <><div className="skill-grid">{visibleDiscoveredListings.map((listing, index) => {
             const previousRequest = !isAdmin && outgoingRequests.find((request) => request.skillId === listing.id && (request.status === "pending" || request.status === "accepted"));
             const requestFormOpen = requestFormFor === listing.id;
-            return <article className="skill-card" key={listing.id} style={{ animationDelay: `${Math.min(index * 45, 270)}ms` }}><div className="skill-card-topline"><span className="skill-category">{listing.category}</span><span className="skill-level">{listing.level}</span></div><h3>{listing.title}</h3><p className="skill-description">{listing.description || "This member is happy to share what they know."}</p>{listing.tags.length > 0 && <div className="skill-tags">{listing.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="skill-card-footer"><Link href={`/profile/${listing.ownerId}`} className="listing-owner"><span className="mini-avatar">{listing.ownerName.slice(0, 1).toUpperCase()}</span><span>{listing.ownerName}</span></Link><span className="listing-status">Open to swap</span></div>
+            return <article className="skill-card" key={listing.id} style={{ animationDelay: `${Math.min(index * 45, 270)}ms` }}><div className="skill-card-topline"><span className="skill-category">{listing.category}</span><span className="skill-level">{listing.level}</span></div><h3>{listing.title}</h3><p className="skill-description">{listing.description || "This member is happy to share what they know."}</p>{listing.tags.length > 0 && <div className="skill-tags">{listing.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="skill-card-footer"><Link href={`/profile/${listing.ownerId}`} className="listing-owner"><span className="mini-avatar">{listing.ownerName.slice(0, 1).toUpperCase()}</span><span>{listing.ownerName}</span></Link><span className="listing-status">Open to swap · {listing.requestCount ?? 0} requests</span></div>
+              {!isAdmin && listing.ownerId !== user?.uid && <Link className="admin-text-button listing-report-link" href={`/report/listing/${encodeURIComponent(listing.id)}`}>Report listing</Link>}
               {!isAdmin && (previousRequest ? <p className="request-existing-status">Request {previousRequest.status}</p> : requestFormOpen ? <form className="swap-request-form" onSubmit={(event) => void sendSwapRequest(listing, event)}><label className="dashboard-field"><span>Message <small>Optional</small></span><textarea value={requestMessage} onChange={(event) => setRequestMessage(event.target.value)} maxLength={500} rows={3} placeholder="What would you like to learn?" /></label><div className="editor-actions"><button className="secondary-action" type="button" onClick={() => { setRequestFormFor(null); setRequestMessage(""); }}>Cancel</button><button className="primary-action" type="submit" disabled={sendingRequestFor !== null}>{sendingRequestFor === listing.id ? "Sending..." : "Send request"}</button></div></form> : <button className="secondary-action request-start" type="button" disabled={loadingRequests} onClick={() => { setRequestFormFor(listing.id); setRequestMessage(""); }}>{loadingRequests ? "Loading requests..." : outgoingRequests.some((request) => request.skillId === listing.id && request.status === "declined") ? "Request again" : "Request a swap"}</button>)}
             </article>;
-          })}</div> : <div className="empty-state"><strong>No matching skills yet.</strong><span>{isAdmin ? "Try another search or category filter." : "Try another search, or be the first to share a skill."}</span></div>}
+          })}</div><div className="discovery-pagination"><span>{currentDiscoveryPage * DISCOVERY_PAGE_SIZE + 1}–{Math.min((currentDiscoveryPage + 1) * DISCOVERY_PAGE_SIZE, discoveredListings.length)} of {discoveredListings.length}</span><div><button className="secondary-action" type="button" disabled={currentDiscoveryPage === 0} onClick={() => setDiscoveryPage(Math.max(0, currentDiscoveryPage - 1))}>Previous</button><button className="secondary-action" type="button" disabled={currentDiscoveryPage >= discoveryPageCount - 1} onClick={() => setDiscoveryPage(Math.min(discoveryPageCount - 1, currentDiscoveryPage + 1))}>Next</button></div></div></> : <div className="empty-state"><strong>No matching skills yet.</strong><span>{isAdmin ? "Try another search or category filter." : "Try another search, or be the first to share a skill."}</span></div>}
         </section>}
 
         {view === "requests" && <section className="swap-requests-view" aria-label="Swap requests">
@@ -682,11 +768,11 @@ export default function SprintTwoWorkspace() {
             <section className="request-group" aria-labelledby="incoming-requests-heading"><div className="results-heading"><h2 id="incoming-requests-heading">Received</h2><span>{incomingRequests.length} {incomingRequests.length === 1 ? "request" : "requests"}</span></div>
               {incomingRequests.length ? <div className="request-list">{incomingRequests.map((request) => {
                 const requesterSkills = listings.filter((listing) => listing.ownerId === request.fromUserId && listing.status === "active");
-                return <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST RECEIVED</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">From a <Link href={`/profile/${request.fromUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{request.status === "pending" && <><label className="dashboard-field request-offer-field"><span>Choose a skill from the requester</span><select value={selectedOfferSkills[request.id] ?? ""} onChange={(event) => setSelectedOfferSkills((current) => ({ ...current, [request.id]: event.target.value }))} required><option value="">Select an active skill</option>{requesterSkills.map((skill) => <option key={skill.id} value={skill.id}>{skill.title}</option>)}</select></label><div className="request-actions"><button className="secondary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "declined")}>Decline</button><button className="primary-action" type="button" disabled={processingRequestId !== null || requesterSkills.length === 0 || !selectedOfferSkills[request.id]} onClick={() => void updateSwapRequest(request, "accepted")}>{processingRequestId === request.id ? "Saving..." : "Accept"}</button></div>{requesterSkills.length === 0 && <p className="request-existing-status">The requester has no active skill listings to select, so this request cannot be accepted.</p>}</>}</article>;
+                return <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST RECEIVED</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">From a <Link href={`/profile/${request.fromUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{(request.status === "accepted" || request.status === "completed") && <ExchangeWorkspace requestId={request.id} currentUserId={user.uid} otherUserId={request.fromUserId} requestStatus={request.status} />}{request.status === "pending" && <><label className="dashboard-field request-offer-field"><span>Choose a skill from the requester</span><select value={selectedOfferSkills[request.id] ?? ""} onChange={(event) => setSelectedOfferSkills((current) => ({ ...current, [request.id]: event.target.value }))} required><option value="">Select an active skill</option>{requesterSkills.map((skill) => <option key={skill.id} value={skill.id}>{skill.title}</option>)}</select></label><div className="request-actions"><button className="secondary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "declined")}>Decline</button><button className="primary-action" type="button" disabled={processingRequestId !== null || requesterSkills.length === 0 || !selectedOfferSkills[request.id]} onClick={() => void updateSwapRequest(request, "accepted")}>{processingRequestId === request.id ? "Saving..." : "Accept"}</button></div>{requesterSkills.length === 0 && <p className="request-existing-status">The requester has no active skill listings to select, so this request cannot be accepted.</p>}</>}</article>;
               })}</div> : <div className="empty-state"><strong>No requests received.</strong><span>When someone requests one of your skills, it will appear here.</span></div>}
             </section>
             <section className="request-group" aria-labelledby="outgoing-requests-heading"><div className="results-heading"><h2 id="outgoing-requests-heading">Sent</h2><span>{outgoingRequests.length} {outgoingRequests.length === 1 ? "request" : "requests"}</span></div>
-              {outgoingRequests.length ? <div className="request-list">{outgoingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST SENT</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}</article>)}</div> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
+              {outgoingRequests.length ? <div className="request-list">{outgoingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST SENT</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{(request.status === "accepted" || request.status === "completed") && <ExchangeWorkspace requestId={request.id} currentUserId={user.uid} otherUserId={request.toUserId} requestStatus={request.status} />}{request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}</article>)}</div> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
             </section>
           </>}
         </section>}
