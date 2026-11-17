@@ -13,6 +13,7 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
+  Timestamp,
   updateDoc,
   where,
   writeBatch,
@@ -90,6 +91,30 @@ interface SwapRequestSnapshotState {
 
 const defaultCategories = ["Art & Design", "Business", "Cooking", "Crafts", "Language", "Music", "Technology", "Wellness", "Other"];
 const DISCOVERY_PAGE_SIZE = 12;
+const NOTIFICATION_PAGE_SIZE = 10;
+
+function DashboardPagination({
+  page,
+  pageSize,
+  total,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}) {
+  const pageCount = Math.ceil(total / pageSize);
+  if (pageCount <= 1) return null;
+  const currentPage = Math.min(page, pageCount - 1);
+  return <div className="discovery-pagination">
+    <span>{currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, total)} of {total}</span>
+    <div>
+      <button className="secondary-action" type="button" disabled={currentPage === 0} onClick={() => onPageChange(Math.max(0, currentPage - 1))}>Previous</button>
+      <button className="secondary-action" type="button" disabled={currentPage >= pageCount - 1} onClick={() => onPageChange(Math.min(pageCount - 1, currentPage + 1))}>Next</button>
+    </div>
+  </div>;
+}
 
 function parseList(value: string) {
   return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
@@ -139,6 +164,13 @@ export default function SprintTwoWorkspace() {
   const [category, setCategory] = useState("All categories");
   const [discoverySort, setDiscoverySort] = useState<"newest" | "oldest" | "popular" | "title">("newest");
   const [discoveryPage, setDiscoveryPage] = useState(0);
+  const [listingSort, setListingSort] = useState<"newest" | "oldest">("newest");
+  const [listingPage, setListingPage] = useState(0);
+  const [incomingRequestSort, setIncomingRequestSort] = useState<"newest" | "oldest">("newest");
+  const [outgoingRequestSort, setOutgoingRequestSort] = useState<"newest" | "oldest">("newest");
+  const [incomingRequestPage, setIncomingRequestPage] = useState(0);
+  const [outgoingRequestPage, setOutgoingRequestPage] = useState(0);
+  const [notificationPage, setNotificationPage] = useState(0);
   const [editing, setEditing] = useState<SkillListing | null>(null);
   const [showEditor, setShowEditor] = useState(false);
   const [showCategoryRequestForm, setShowCategoryRequestForm] = useState(false);
@@ -448,12 +480,42 @@ export default function SprintTwoWorkspace() {
     currentDiscoveryPage * DISCOVERY_PAGE_SIZE,
     (currentDiscoveryPage + 1) * DISCOVERY_PAGE_SIZE,
   );
+  const sortedMyListings = [...myListings].sort((first, second) =>
+    (listingSort === "newest" ? -1 : 1) * (createdTime(first) - createdTime(second)));
+  const currentListingPage = Math.min(listingPage, Math.max(0,
+    Math.ceil(sortedMyListings.length / DISCOVERY_PAGE_SIZE) - 1));
+  const visibleMyListings = sortedMyListings.slice(
+    currentListingPage * DISCOVERY_PAGE_SIZE,
+    (currentListingPage + 1) * DISCOVERY_PAGE_SIZE,
+  );
   const requestSnapshotIsCurrent = requestSnapshot.userId === user?.uid;
   const incomingRequests = requestSnapshotIsCurrent ? requestSnapshot.incoming : [];
   const outgoingRequests = requestSnapshotIsCurrent ? requestSnapshot.outgoing : [];
+  const sortedIncomingRequests = [...incomingRequests].sort((first, second) =>
+    (incomingRequestSort === "newest" ? -1 : 1) * (requestCreatedTime(first) - requestCreatedTime(second)));
+  const sortedOutgoingRequests = [...outgoingRequests].sort((first, second) =>
+    (outgoingRequestSort === "newest" ? -1 : 1) * (requestCreatedTime(first) - requestCreatedTime(second)));
+  const currentIncomingRequestPage = Math.min(incomingRequestPage, Math.max(0,
+    Math.ceil(sortedIncomingRequests.length / DISCOVERY_PAGE_SIZE) - 1));
+  const currentOutgoingRequestPage = Math.min(outgoingRequestPage, Math.max(0,
+    Math.ceil(sortedOutgoingRequests.length / DISCOVERY_PAGE_SIZE) - 1));
+  const visibleIncomingRequests = sortedIncomingRequests.slice(
+    currentIncomingRequestPage * DISCOVERY_PAGE_SIZE,
+    (currentIncomingRequestPage + 1) * DISCOVERY_PAGE_SIZE,
+  );
+  const visibleOutgoingRequests = sortedOutgoingRequests.slice(
+    currentOutgoingRequestPage * DISCOVERY_PAGE_SIZE,
+    (currentOutgoingRequestPage + 1) * DISCOVERY_PAGE_SIZE,
+  );
   const loadingRequests = !requestSnapshotIsCurrent || !requestSnapshot.incomingLoaded || !requestSnapshot.outgoingLoaded;
   const requestLoadError = requestSnapshotIsCurrent ? requestSnapshot.error : null;
   const notifications = notificationSnapshot.userId === user?.uid ? notificationSnapshot.notifications : [];
+  const currentNotificationPage = Math.min(notificationPage, Math.max(0,
+    Math.ceil(notifications.length / NOTIFICATION_PAGE_SIZE) - 1));
+  const visibleNotifications = notifications.slice(
+    currentNotificationPage * NOTIFICATION_PAGE_SIZE,
+    (currentNotificationPage + 1) * NOTIFICATION_PAGE_SIZE,
+  );
   const notificationError = notificationSnapshot.userId === user?.uid ? notificationSnapshot.error : null;
   const unreadNotificationCount = notifications.filter((notification) => !notification.read).length;
   const personalSwaps = [...incomingRequests, ...outgoingRequests];
@@ -510,7 +572,8 @@ export default function SprintTwoWorkspace() {
         setNotice("Listing updated.");
       } else {
         const created = await addDoc(collection(db, "skills"), { ...data, requestCount: 0, createdAt: serverTimestamp() });
-        setListings((current) => [{ id: created.id, ...data }, ...current]);
+        setListings((current) => [{ id: created.id, ...data, createdAt: Timestamp.now() }, ...current]);
+        setListingPage(0);
         setNotice("Listing published.");
       }
       setShowEditor(false); setEditing(null);
@@ -563,6 +626,7 @@ export default function SprintTwoWorkspace() {
         createdAt: serverTimestamp(),
       });
       await batch.commit();
+      setOutgoingRequestPage(0);
       setRequestFormFor(null);
       setRequestMessage("");
       setNotice("Swap request sent.");
@@ -729,7 +793,7 @@ export default function SprintTwoWorkspace() {
             </button>
             {notificationsOpen && <section className="notification-popover" aria-label="Notifications">
               <div className="notification-popover-heading"><strong>Notifications</strong>{unreadNotificationCount > 0 && <button className="text-action" type="button" onClick={() => void markAllNotificationsRead()}>Mark all read</button>}</div>
-              {notificationError ? <p className="notification-empty" role="alert">{notificationError}</p> : notifications.length ? <ul className="notification-list">{notifications.slice(0, 20).map((notification) => <li key={notification.id}><button className={`notification-item${notification.read ? "" : " unread"}`} type="button" onClick={() => void openNotification(notification)}><span className="notification-dot" aria-hidden="true" /><span>{notification.kind === "category_request" ? "A member requested a new skill category." : notification.kind === "swap_request" ? "You received a new swap request." : notification.kind === "swap_accepted" ? "Your swap request was accepted." : "Your swap request was declined."}</span></button></li>)}</ul> : <p className="notification-empty">You’re all caught up.</p>}
+              {notificationError ? <p className="notification-empty" role="alert">{notificationError}</p> : notifications.length ? <><ul className="notification-list">{visibleNotifications.map((notification) => <li key={notification.id}><button className={`notification-item${notification.read ? "" : " unread"}`} type="button" onClick={() => void openNotification(notification)}><span className="notification-dot" aria-hidden="true" /><span>{notification.kind === "category_request" ? "A member requested a new skill category." : notification.kind === "swap_request" ? "You received a new swap request." : notification.kind === "swap_accepted" ? "Your swap request was accepted." : "Your swap request was declined."}</span></button></li>)}</ul><DashboardPagination page={currentNotificationPage} pageSize={NOTIFICATION_PAGE_SIZE} total={notifications.length} onPageChange={setNotificationPage} /></> : <p className="notification-empty">You’re all caught up.</p>}
             </section>}
           </div>
           <button className="theme-toggle" type="button" onClick={onToggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}><span aria-hidden="true">{theme === "light" ? "◐" : "☀"}</span></button>
@@ -765,14 +829,14 @@ export default function SprintTwoWorkspace() {
 
         {view === "requests" && <section className="swap-requests-view" aria-label="Swap requests">
           {loadingRequests ? <div className="empty-state">Loading swap requests...</div> : requestLoadError ? <div className="empty-state" role="alert"><strong>Requests are unavailable.</strong><span>{requestLoadError}</span></div> : <>
-            <section className="request-group" aria-labelledby="incoming-requests-heading"><div className="results-heading"><h2 id="incoming-requests-heading">Received</h2><span>{incomingRequests.length} {incomingRequests.length === 1 ? "request" : "requests"}</span></div>
-              {incomingRequests.length ? <div className="request-list">{incomingRequests.map((request) => {
+            <section className="request-group" aria-labelledby="incoming-requests-heading"><div className="results-heading"><h2 id="incoming-requests-heading">Received</h2><span>{incomingRequests.length} {incomingRequests.length === 1 ? "request" : "requests"}</span><label className="category-filter"><span className="visually-hidden">Sort received requests</span><select value={incomingRequestSort} onChange={(event) => { setIncomingRequestSort(event.target.value as typeof incomingRequestSort); setIncomingRequestPage(0); }}><option value="newest">Latest first</option><option value="oldest">Oldest first</option></select></label></div>
+              {incomingRequests.length ? <><div className="request-list">{visibleIncomingRequests.map((request) => {
                 const requesterSkills = listings.filter((listing) => listing.ownerId === request.fromUserId && listing.status === "active");
                 return <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST RECEIVED</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">From a <Link href={`/profile/${request.fromUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{(request.status === "accepted" || request.status === "completed") && <ExchangeWorkspace requestId={request.id} currentUserId={user.uid} otherUserId={request.fromUserId} requestStatus={request.status} />}{request.status === "pending" && <><label className="dashboard-field request-offer-field"><span>Choose a skill from the requester</span><select value={selectedOfferSkills[request.id] ?? ""} onChange={(event) => setSelectedOfferSkills((current) => ({ ...current, [request.id]: event.target.value }))} required><option value="">Select an active skill</option>{requesterSkills.map((skill) => <option key={skill.id} value={skill.id}>{skill.title}</option>)}</select></label><div className="request-actions"><button className="secondary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "declined")}>Decline</button><button className="primary-action" type="button" disabled={processingRequestId !== null || requesterSkills.length === 0 || !selectedOfferSkills[request.id]} onClick={() => void updateSwapRequest(request, "accepted")}>{processingRequestId === request.id ? "Saving..." : "Accept"}</button></div>{requesterSkills.length === 0 && <p className="request-existing-status">The requester has no active skill listings to select, so this request cannot be accepted.</p>}</>}</article>;
-              })}</div> : <div className="empty-state"><strong>No requests received.</strong><span>When someone requests one of your skills, it will appear here.</span></div>}
+              })}</div><DashboardPagination page={currentIncomingRequestPage} pageSize={DISCOVERY_PAGE_SIZE} total={incomingRequests.length} onPageChange={setIncomingRequestPage} /></> : <div className="empty-state"><strong>No requests received.</strong><span>When someone requests one of your skills, it will appear here.</span></div>}
             </section>
-            <section className="request-group" aria-labelledby="outgoing-requests-heading"><div className="results-heading"><h2 id="outgoing-requests-heading">Sent</h2><span>{outgoingRequests.length} {outgoingRequests.length === 1 ? "request" : "requests"}</span></div>
-              {outgoingRequests.length ? <div className="request-list">{outgoingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST SENT</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{(request.status === "accepted" || request.status === "completed") && <ExchangeWorkspace requestId={request.id} currentUserId={user.uid} otherUserId={request.toUserId} requestStatus={request.status} />}{request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}</article>)}</div> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
+            <section className="request-group" aria-labelledby="outgoing-requests-heading"><div className="results-heading"><h2 id="outgoing-requests-heading">Sent</h2><span>{outgoingRequests.length} {outgoingRequests.length === 1 ? "request" : "requests"}</span><label className="category-filter"><span className="visually-hidden">Sort sent requests</span><select value={outgoingRequestSort} onChange={(event) => { setOutgoingRequestSort(event.target.value as typeof outgoingRequestSort); setOutgoingRequestPage(0); }}><option value="newest">Latest first</option><option value="oldest">Oldest first</option></select></label></div>
+              {outgoingRequests.length ? <><div className="request-list">{visibleOutgoingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST SENT</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{(request.status === "accepted" || request.status === "completed") && <ExchangeWorkspace requestId={request.id} currentUserId={user.uid} otherUserId={request.toUserId} requestStatus={request.status} />}{request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}</article>)}</div><DashboardPagination page={currentOutgoingRequestPage} pageSize={DISCOVERY_PAGE_SIZE} total={outgoingRequests.length} onPageChange={setOutgoingRequestPage} /></> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
             </section>
           </>}
         </section>}
@@ -809,9 +873,9 @@ export default function SprintTwoWorkspace() {
           </div>}
         </section>}
 
-        {view === "listings" && !isAdmin && <section aria-label="Manage your skill listings"><div className="section-toolbar"><div><h2>Your listings</h2><p>{myListings.length} total · {myListings.filter((item) => item.status === "active").length} active</p></div>{!showEditor && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); }}>＋ New listing</button>}</div>
+        {view === "listings" && !isAdmin && <section aria-label="Manage your skill listings"><div className="section-toolbar"><div><h2>Your listings</h2><p>{myListings.length} total · {myListings.filter((item) => item.status === "active").length} active</p></div><div className="admin-row-actions"><label className="category-filter"><span className="visually-hidden">Sort your listings</span><select value={listingSort} onChange={(event) => { setListingSort(event.target.value as typeof listingSort); setListingPage(0); }}><option value="newest">Latest first</option><option value="oldest">Oldest first</option></select></label>{!showEditor && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); }}>＋ New listing</button>}</div></div>
           {showEditor && <form className="skill-editor" onSubmit={saveListing}><div className="editor-heading"><div><p className="dashboard-eyebrow">{editing ? "EDIT LISTING" : "NEW LISTING"}</p><h2>{editing ? "Refine your offer" : "What can you teach?"}</h2></div><button className="icon-button" type="button" onClick={() => { setShowEditor(false); setEditing(null); }} aria-label="Close listing form">×</button></div><div className="editor-grid"><label className="dashboard-field"><span>Skill title</span><input name="title" defaultValue={editing?.title ?? ""} maxLength={70} placeholder="e.g. Beginner watercolor techniques" required /></label><label className="dashboard-field"><span>Category</span><select name="category" defaultValue={editing?.category ?? categories[0]}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label className="dashboard-field"><span>Experience level</span><select name="level" defaultValue={editing?.level ?? "beginner"}><option value="beginner">Beginner friendly</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></label><label className="dashboard-field"><span>Tags <small>Separate with commas</small></span><input name="tags" defaultValue={editing?.tags.join(", ") ?? ""} placeholder="remote, materials included" /></label><label className="dashboard-field editor-description"><span>Description</span><textarea name="description" defaultValue={editing?.description ?? ""} maxLength={500} placeholder="What will someone learn? What should they bring?" rows={4} /></label></div><div className="editor-actions"><button className="secondary-action" type="button" onClick={() => { setShowEditor(false); setEditing(null); }}>Cancel</button><button className="primary-action" type="submit" disabled={saving}>{saving ? "Saving..." : editing ? "Save changes" : "Publish listing"}</button></div></form>}
-          {loadingData ? <div className="empty-state">Loading your listings...</div> : myListings.length ? <div className="managed-listings">{myListings.map((listing) => <article className="managed-listing" key={listing.id}><div className="managed-listing-copy"><span className={`status-dot ${listing.status}`} /> <span className="managed-category">{listing.category} · {listing.status}</span><h3>{listing.title}</h3><p>{listing.description || "No description added."}</p></div><div className="managed-listing-actions"><button className="text-action" type="button" onClick={() => { setEditing(listing); setShowEditor(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Edit</button><button className="text-action" type="button" onClick={() => setListingStatus(listing, listing.status === "paused" ? "active" : "paused")}>{listing.status === "paused" ? "Resume" : "Pause"}</button><button className="text-action destructive-action" type="button" onClick={() => removeListing(listing)}>Delete</button></div></article>)}</div> : !showEditor ? <div className="empty-state"><strong>Your first listing starts here.</strong><span>Share a skill you enjoy teaching and help someone take their next step.</span><button className="primary-action" type="button" onClick={() => setShowEditor(true)}>＋ Create a listing</button></div> : null}
+          {loadingData ? <div className="empty-state">Loading your listings...</div> : myListings.length ? <><div className="managed-listings">{visibleMyListings.map((listing) => <article className="managed-listing" key={listing.id}><div className="managed-listing-copy"><span className={`status-dot ${listing.status}`} /> <span className="managed-category">{listing.category} · {listing.status}</span><h3>{listing.title}</h3><p>{listing.description || "No description added."}</p></div><div className="managed-listing-actions"><button className="text-action" type="button" onClick={() => { setEditing(listing); setShowEditor(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Edit</button><button className="text-action" type="button" onClick={() => setListingStatus(listing, listing.status === "paused" ? "active" : "paused")}>{listing.status === "paused" ? "Resume" : "Pause"}</button><button className="text-action destructive-action" type="button" onClick={() => removeListing(listing)}>Delete</button></div></article>)}</div><DashboardPagination page={currentListingPage} pageSize={DISCOVERY_PAGE_SIZE} total={myListings.length} onPageChange={setListingPage} /></> : !showEditor ? <div className="empty-state"><strong>Your first listing starts here.</strong><span>Share a skill you enjoy teaching and help someone take their next step.</span><button className="primary-action" type="button" onClick={() => setShowEditor(true)}>＋ Create a listing</button></div> : null}
         </section>}
 
         {view === "profile" && <div className="profile-view-grid"><section className="profile-editor dashboard-card"><div className="dashboard-card-heading"><div><p className="dashboard-eyebrow">YOUR PROFILE</p><h2>A little about you</h2></div><span className="profile-avatar" aria-hidden="true">{displayName.slice(0, 1).toUpperCase()}</span></div>{loadingData ? <div className="profile-loading" role="status">Loading your profile...</div> : <form className="profile-form" onSubmit={saveProfile}><label className="dashboard-field"><span>Display name</span><input value={profile?.displayName ?? user.displayName ?? ""} readOnly /></label><label className="dashboard-field"><span>Bio</span><textarea value={bio} onChange={(event) => setBio(event.target.value)} maxLength={280} placeholder="What do you enjoy teaching or learning?" rows={4} /><small className="field-count">{bio.length}/280</small></label><label className="dashboard-field"><span>Skills you can teach <small>Separate with commas</small></span><input value={skillsText} onChange={(event) => setSkillsText(event.target.value)} placeholder="Guitar, Excel, Spanish" /></label><label className="dashboard-field"><span>Skills you want to learn <small>Separate with commas</small></span><input value={goalsText} onChange={(event) => setGoalsText(event.target.value)} placeholder="Pottery, public speaking" /></label><button className="primary-action profile-save" type="submit" disabled={saving || loadingData}>{saving ? "Saving..." : "Save profile"}</button></form>}</section><aside className="profile-summary"><div className="profile-summary-head"><span className="profile-avatar large" aria-hidden="true">{displayName.slice(0, 1).toUpperCase()}</span><h2>{displayName}</h2><p>{user.email}</p></div><div className="profile-summary-stats"><div><strong>{myListings.filter((item) => item.status === "active").length}</strong><span>Active listings</span></div><div><strong>{profile?.ratingCount ? profile.rating?.toFixed(1) ?? "0.0" : "New"}</strong><span>Community rating</span></div></div><div className="profile-summary-section"><p className="dashboard-eyebrow">SKILLS I OFFER</p><div className="profile-chips">{parseList(skillsText).length ? parseList(skillsText).map((skill) => <span key={skill}>{skill}</span>) : <p>Add a few skills to introduce yourself.</p>}</div></div><div className="profile-summary-section"><p className="dashboard-eyebrow">LOOKING TO LEARN</p><div className="profile-chips learning-chips">{parseList(goalsText).length ? parseList(goalsText).map((goal) => <span key={goal}>{goal}</span>) : <p>What would you like to learn next?</p>}</div></div></aside></div>}
