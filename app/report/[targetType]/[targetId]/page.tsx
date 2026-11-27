@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { SkillSwapLogo } from "@/components/skill-swap-logo";
 import { useAuth } from "@/lib/auth-context";
 import { getAuthErrorMessage } from "@/lib/auth-errors";
 import { db } from "@/lib/firebase";
@@ -54,12 +55,12 @@ export default function ReportPage() {
   if (!targetType || !targetId) return <main className="dashboard-loading" role="alert">This report link is invalid.</main>;
 
   if (submitted) return <main className="dashboard-shell public-profile-shell" data-theme={theme}>
-    <header className="dashboard-header"><Link className="dashboard-brand" href="/dashboard"><span className="dashboard-brand-mark" aria-hidden="true">s</span><span>skill swap</span></Link><Link className="back-link" href="/dashboard">← Back to dashboard</Link></header>
+    <header className="dashboard-header"><Link className="dashboard-brand" href="/dashboard"><SkillSwapLogo /></Link><Link className="back-link" href="/dashboard">← Back to dashboard</Link></header>
     <section className="report-form-page"><p className="dashboard-eyebrow">COMMUNITY SAFETY</p><h1>Report received</h1><p>Your report has been sent to the moderation team. Thank you for helping keep Skill Swap welcoming.</p><Link className="admin-button primary" href="/dashboard">Return to dashboard</Link></section>
   </main>;
 
   return <main className="dashboard-shell public-profile-shell" data-theme={theme}>
-    <header className="dashboard-header"><Link className="dashboard-brand" href="/dashboard"><span className="dashboard-brand-mark" aria-hidden="true">s</span><span>skill swap</span></Link><Link className="back-link" href="/dashboard">← Back to dashboard</Link></header>
+    <header className="dashboard-header"><Link className="dashboard-brand" href="/dashboard"><SkillSwapLogo /></Link><Link className="back-link" href="/dashboard">← Back to dashboard</Link></header>
     <section className="report-form-page">
       <p className="dashboard-eyebrow">COMMUNITY SAFETY</p>
       <h1>Report {targetType === "user" ? "a member" : "a skill listing"}</h1>

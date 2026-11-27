@@ -103,34 +103,14 @@ button:disabled {
   display: inline-flex;
   width: fit-content;
   align-items: center;
-  gap: 12px;
+  gap: 0;
   color: inherit;
   font-size: 15px;
   font-weight: 650;
   text-decoration: none;
 }
 
-.brand-mark {
-  position: relative;
-  display: inline-flex;
-  width: 28px;
-  height: 28px;
-  align-items: center;
-}
-
-.brand-mark span {
-  position: absolute;
-  width: 17px;
-  height: 17px;
-  border: 2px solid #f4b28b;
-  border-radius: 5px;
-  transform: rotate(45deg);
-}
-
-.brand-mark span + span {
-  left: 9px;
-  border-color: #9bc9ad;
-}
+.skill-swap-logo { display: block; width: 140px; height: 64px; flex: 0 0 auto; border-radius: 3px; background: #103128; object-fit: cover; object-position: center; }
 
 .welcome-copy {
   margin-top: clamp(72px, 13vh, 150px);
@@ -499,23 +479,11 @@ button:disabled {
 }
 
 .dashboard-brand {
-  gap: 10px;
+  gap: 0;
   color: var(--moss);
   font-size: 14px;
   font-weight: 700;
   text-decoration: none;
-}
-
-.dashboard-brand-mark {
-  display: grid;
-  width: 29px;
-  height: 29px;
-  place-items: center;
-  border-radius: 50% 50% 50% 4px;
-  background: var(--coral);
-  color: #251f1b;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 18px;
 }
 
 .dashboard-header-actions {
@@ -1113,9 +1081,9 @@ button:disabled {
 }
 @media (max-width: 640px) {
   .dashboard-header { min-height: 64px; flex-wrap: wrap; gap: 0 8px; padding: 0 16px; }
-  .dashboard-brand { font-size: 12px; } .dashboard-brand-mark { width: 25px; height: 25px; }
-  .dashboard-nav { order: 3; width: 100%; height: 44px; justify-content: center; gap: clamp(10px, 3vw, 20px); }
-  .dashboard-nav-item { font-size: 11px; } .dashboard-header-actions { margin-left: auto; gap: 7px; }
+  .dashboard-brand { font-size: 12px; } .dashboard-brand .skill-swap-logo { width: 112px; height: 51px; }
+  .dashboard-nav { order: 3; width: 100%; height: 44px; justify-content: flex-start; gap: clamp(10px, 3vw, 20px); overflow-x: auto; }
+  .dashboard-nav-item { flex: 0 0 auto; font-size: 11px; } .dashboard-header-actions { margin-left: auto; gap: 7px; }
   .dashboard-signout { min-height: 32px; padding: 0 9px; font-size: 10px; } .theme-toggle { width: 32px; height: 32px; }
   .discover-tools { grid-template-columns: 1fr auto; gap: 8px; padding: 9px; } .search-field { grid-column: 1 / -1; }
   .category-filter select { min-height: 40px; } .primary-action { padding: 0 10px; font-size: 10px; }
@@ -1129,6 +1097,24 @@ button:disabled {
 }
 
 .swap-requests-view { display: grid; gap: 32px; }
+.schedule-calendar { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
+.schedule-calendar-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.schedule-calendar-header h2 { margin: 0; color: var(--text); font-family: Georgia, "Times New Roman", serif; font-size: 21px; font-weight: 400; }
+.schedule-calendar-header p { margin: 5px 0 0; color: var(--text-muted); font-size: 10px; }
+.schedule-calendar-controls { display: flex; align-items: center; gap: 8px; }
+.schedule-calendar-controls > .secondary-action { width: 34px; min-height: 34px; padding: 0; font-size: 18px; }
+.schedule-calendar-controls > strong { min-width: 128px; color: var(--text); font-size: 12px; text-align: center; }
+.schedule-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }
+.schedule-calendar-weekday { padding: 4px; color: var(--text-muted); font-size: 9px; font-weight: 650; text-align: center; }
+.schedule-calendar-day { display: flex; min-width: 0; min-height: 62px; flex-direction: column; align-items: flex-start; gap: 7px; padding: 7px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.schedule-calendar-day:hover,.schedule-calendar-day.selected { border-color: var(--accent); }
+.schedule-calendar-day.selected { box-shadow: inset 0 0 0 1px var(--accent); }
+.schedule-calendar-day.outside-month { color: var(--text-muted); opacity: .55; }
+.schedule-calendar-day.has-swaps { background: var(--surface-muted); }
+.schedule-calendar-day-number { font-size: 11px; }
+.schedule-calendar-count { max-width: 100%; color: var(--accent); font-size: 8px; line-height: 1.2; overflow-wrap: anywhere; }
+.schedule-calendar-selection { margin-top: 4px; }
+.schedule-calendar-empty { margin: 0; color: var(--text-muted); font-size: 11px; }
 .request-group .results-heading { margin-bottom: 12px; }
 .request-list { display: grid; gap: 10px; }
 .request-card { padding: 18px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
@@ -1163,6 +1149,13 @@ button:disabled {
 @media (max-width: 640px) {
   .swap-requests-view { gap: 25px; }
   .request-card { padding: 15px; }
+  .schedule-calendar { padding: 10px; }
+  .schedule-calendar-header { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .schedule-calendar-controls { width: 100%; gap: 6px; }
+  .schedule-calendar-controls > strong { flex: 1; min-width: 0; }
+  .schedule-calendar-grid { gap: 3px; }
+  .schedule-calendar-day { min-height: 50px; gap: 5px; padding: 5px 3px; }
+  .schedule-calendar-count { font-size: 7px; }
   .request-exchange-details { grid-template-columns: 1fr 1fr; }
   .request-exchange-details > div:last-child { grid-column: 1 / -1; }
 }
@@ -1381,7 +1374,7 @@ button:disabled {
   border-right: 1px solid var(--admin-border);
   background: var(--admin-panel);
 }
-.admin-brand,.admin-mobile-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--admin-text); font-size: 14px; font-weight: 700; text-decoration: none; }
+.admin-brand,.admin-mobile-brand { display: inline-flex; align-items: center; gap: 0; color: var(--admin-text); font-size: 14px; font-weight: 700; text-decoration: none; }
 .admin-brand { padding: 0 11px 28px; }
 .admin-sidebar-label { margin: 0 11px 10px; color: var(--admin-muted); font-size: 9px; font-weight: 700; letter-spacing: .12em; }
 .admin-sidebar-nav { display: grid; gap: 3px; }
@@ -1568,7 +1561,7 @@ html[data-theme="dark"] .admin-shell .dashboard-message.dashboard-notice { borde
   .admin-side-icon { font-size: 13px; }
   .admin-topbar { position: static; min-height: 58px; flex-wrap: wrap; gap: 10px; padding: 9px 13px; }
   .admin-mobile-brand { display: inline-flex; flex: 1 0 130px; font-size: 12px; }
-  .admin-mobile-brand .dashboard-brand-mark { transform: scale(.85); }
+  .admin-mobile-brand .skill-swap-logo { width: 104px; height: 48px; }
   .admin-global-search { order: 2; width: 100%; }
   .admin-global-search input { height: 32px; }
   .admin-top-actions { gap: 7px; }

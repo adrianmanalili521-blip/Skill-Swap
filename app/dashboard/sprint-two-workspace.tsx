@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { SkillSwapLogo } from "@/components/skill-swap-logo";
 import {
   addDoc,
   collection,
@@ -26,7 +27,7 @@ import { getRecentMonths, timestampMonthKey } from "@/lib/analytics";
 import { CommunityRankings, ExchangeWorkspace, IdVerificationForm } from "./enhancement-panels";
 import { DEFAULT_SKILL_DURATION_MINUTES, formatSkillPrice, SKILL_PRICE_CURRENCY } from "@/lib/skill-listing-format";
 
-type View = "discover" | "listings" | "requests" | "analytics" | "profile";
+type View = "discover" | "listings" | "requests" | "schedule" | "analytics" | "profile";
 type SkillLevel = "beginner" | "intermediate" | "advanced";
 type SwapRequestStatus = "pending" | "accepted" | "declined" | "cancelled" | "completed";
 
@@ -73,6 +74,8 @@ interface SwapRequest {
   createdAt?: { toMillis?: () => number };
   scheduledAt?: Timestamp | null;
   scheduleStatus?: "proposed" | "selected" | "confirmed";
+  scheduleDurationMinutes?: number;
+  scheduleTimeZone?: string;
   scheduleOptions?: Timestamp[];
   scheduleSelectedIndex?: number | null;
   scheduleMode?: "online" | "onsite";
@@ -194,6 +197,48 @@ function requestScheduleSummary(request: SwapRequest) {
   ].filter(Boolean).join(" · ");
 }
 
+function scheduledTimeRange(request: SwapRequest) {
+  const start = request.scheduledAt?.toDate();
+  if (!start) return "Time not set";
+
+  const durationMinutes = request.scheduleDurationMinutes
+    ?? request.durationMinutes
+    ?? DEFAULT_SKILL_DURATION_MINUTES * 2;
+  const end = new Date(start.getTime() + durationMinutes * 60_000);
+  const dateOptions = { dateStyle: "medium" } as const;
+  const timeOptions = { hour: "numeric", minute: "2-digit" } as const;
+  const startDate = new Intl.DateTimeFormat(undefined, dateOptions).format(start);
+  const endDate = new Intl.DateTimeFormat(undefined, dateOptions).format(end);
+  const startTime = new Intl.DateTimeFormat(undefined, timeOptions).format(start);
+  const endTime = new Intl.DateTimeFormat(undefined, timeOptions).format(end);
+  const sameDate = new Intl.DateTimeFormat("en", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(start) === new Intl.DateTimeFormat("en", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(end);
+
+  return `${startDate}, ${startTime}–${sameDate ? "" : `${endDate}, `}${endTime}`;
+}
+
+function calendarDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function calendarGridDates(month: Date) {
+  const firstDay = new Date(month.getFullYear(), month.getMonth(), 1);
+  const dayCount = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const cellCount = Math.ceil((firstDay.getDay() + dayCount) / 7) * 7;
+  return Array.from({ length: cellCount }, (_, index) =>
+    new Date(month.getFullYear(), month.getMonth(), index - firstDay.getDay() + 1));
+}
+
 function RequestExchangeDetails({
   request,
   listings,
@@ -222,6 +267,51 @@ function RequestExchangeDetails({
     <div><span>You receive</span><strong>{userReceives}</strong></div>
     <div><span>Duration</span><strong>{duration}</strong></div>
   </div>;
+}
+
+function ScheduledSwapCard({
+  request,
+  listings,
+  currentUserId,
+  currentTime,
+}: {
+  request: SwapRequest;
+  listings: SkillListing[];
+  currentUserId: string;
+  currentTime: number | null;
+}) {
+  const scheduledAt = request.scheduledAt;
+  if (!scheduledAt) return null;
+
+  const direction = request.fromUserId === currentUserId ? "sent" : "received";
+  const otherUserId = direction === "sent" ? request.toUserId : request.fromUserId;
+  const requestedListing = listings.find((listing) => listing.id === request.skillId);
+  const durationMinutes = request.scheduleDurationMinutes
+    ?? request.durationMinutes
+    ?? DEFAULT_SKILL_DURATION_MINUTES * 2;
+  const isPast = currentTime !== null && scheduledAt.toMillis() < currentTime;
+  const meetingDetails = request.scheduleMode === "onsite"
+    ? ["Onsite", request.scheduleVenue]
+    : request.scheduleMode === "online"
+      ? ["Online", request.schedulePlatform, request.scheduleNote]
+      : [request.scheduleNote];
+
+  return <article className="request-card">
+    <div className="request-card-heading">
+      <div>
+        <p className="dashboard-eyebrow">{isPast ? "PAST SWAP" : "UPCOMING SWAP"}</p>
+        <h3>{requestedListing?.title ?? "Skill exchange"}</h3>
+      </div>
+      <span className={`request-status ${request.status}`}>
+        {request.status === "completed" ? "Completed" : isPast ? "Needs rescheduling" : "Upcoming"}
+      </span>
+    </div>
+    <p className="request-participant">With <Link href={`/profile/${otherUserId}`}>community member</Link></p>
+    <RequestExchangeDetails request={request} listings={listings} direction={direction} />
+    <p className="request-schedule-details">
+      {scheduledTimeRange(request)} · {durationMinutes} minutes · {meetingDetails.filter(Boolean).join(" · ")}
+    </p>
+  </article>;
 }
 
 function notificationCreatedTime(notification: AppNotification) {
@@ -269,6 +359,9 @@ export default function SprintTwoWorkspace() {
   const { user, loading, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const router = useRouter();
+  const [currentTime, setCurrentTime] = useState<number | null>(null);
+  const [calendarMonth, setCalendarMonth] = useState<Date | null>(null);
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState<string | null>(null);
   const [view, setView] = useState<View>("discover");
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [listings, setListings] = useState<SkillListing[]>([]);
@@ -319,6 +412,22 @@ export default function SprintTwoWorkspace() {
   const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const refreshScheduleDate = () => {
+      const now = new Date();
+      setCurrentTime(now.getTime());
+      setCalendarMonth((month) => month ?? new Date(now.getFullYear(), now.getMonth(), 1));
+      setSelectedCalendarDay((day) => day ?? calendarDateKey(now));
+    };
+    const initialization = window.setTimeout(refreshScheduleDate, 0);
+    const refreshCurrentTime = () => setCurrentTime(Date.now());
+    const interval = window.setInterval(refreshCurrentTime, 60_000);
+    return () => {
+      window.clearTimeout(initialization);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/");
@@ -650,6 +759,28 @@ export default function SprintTwoWorkspace() {
   );
   const loadingRequests = !requestSnapshotIsCurrent || !requestSnapshot.incomingLoaded || !requestSnapshot.outgoingLoaded;
   const requestLoadError = requestSnapshotIsCurrent ? requestSnapshot.error : null;
+  const scheduledSwaps = [...incomingRequests, ...outgoingRequests]
+    .filter((request) => (request.status === "accepted" || request.status === "completed")
+      && request.scheduledAt
+      && (request.scheduleStatus === "confirmed" || !request.scheduleStatus))
+    .sort((first, second) =>
+      (first.scheduledAt?.toMillis() ?? 0) - (second.scheduledAt?.toMillis() ?? 0));
+  const upcomingScheduledSwaps = currentTime === null ? scheduledSwaps : scheduledSwaps.filter(
+    (request) => (request.scheduledAt?.toMillis() ?? 0) >= currentTime,
+  );
+  const pastScheduledSwaps = currentTime === null ? [] : scheduledSwaps.filter(
+    (request) => (request.scheduledAt?.toMillis() ?? 0) < currentTime,
+  ).reverse();
+  const calendarEventsByDate = new Map<string, SwapRequest[]>();
+  scheduledSwaps.forEach((request) => {
+    const scheduledAt = request.scheduledAt?.toDate();
+    if (!scheduledAt) return;
+    const dateKey = calendarDateKey(scheduledAt);
+    calendarEventsByDate.set(dateKey, [...(calendarEventsByDate.get(dateKey) ?? []), request]);
+  });
+  const calendarDates = calendarMonth ? calendarGridDates(calendarMonth) : [];
+  const selectedCalendarDate = calendarDates.find((date) => calendarDateKey(date) === selectedCalendarDay);
+  const selectedDaySwaps = selectedCalendarDay ? calendarEventsByDate.get(selectedCalendarDay) ?? [] : [];
   const notifications = notificationSnapshot.userId === user?.uid ? notificationSnapshot.notifications : [];
   const currentNotificationPage = Math.min(notificationPage, Math.max(0,
     Math.ceil(notifications.length / NOTIFICATION_PAGE_SIZE) - 1));
@@ -934,14 +1065,14 @@ export default function SprintTwoWorkspace() {
   }
   const displayName = profile?.displayName || user.displayName || "there";
   const isAdmin = profile?.role === "admin";
-  const navigationItems: View[] = isAdmin ? ["discover", "profile"] : ["discover", "listings", "requests", "analytics", "profile"];
+  const navigationItems: View[] = isAdmin ? ["discover", "profile"] : ["discover", "listings", "requests", "schedule", "analytics", "profile"];
 
   return (
     <main className="dashboard-shell" data-theme={theme}>
       <header className="dashboard-header">
-        <Link className="dashboard-brand" href="/dashboard"><span className="dashboard-brand-mark" aria-hidden="true">s</span><span>skill swap</span></Link>
+        <Link className="dashboard-brand" href="/dashboard"><SkillSwapLogo /></Link>
         <nav className="dashboard-nav" aria-label="Main navigation">
-          {navigationItems.map((item) => <button key={item} className={view === item ? "dashboard-nav-item active" : "dashboard-nav-item"} type="button" onClick={() => { setView(item); setNotice(null); }}>{item === "listings" ? "My listings" : item === "requests" ? "Swap requests" : item === "analytics" ? "Analytics" : item === "discover" ? "Discover" : "Profile"}</button>)}
+          {navigationItems.map((item) => <button key={item} className={view === item ? "dashboard-nav-item active" : "dashboard-nav-item"} type="button" onClick={() => { setView(item); setNotice(null); }}>{item === "listings" ? "My listings" : item === "requests" ? "Swap requests" : item === "schedule" ? "Schedule" : item === "analytics" ? "Analytics" : item === "discover" ? "Discover" : "Profile"}</button>)}
           {isAdmin && <Link className="dashboard-nav-item admin-nav-link" href="/admin">Admin panel</Link>}
         </nav>
         <div className="dashboard-header-actions">
@@ -961,7 +1092,7 @@ export default function SprintTwoWorkspace() {
         </div>
       </header>
       <div className="dashboard-main">
-        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? isAdmin ? "Explore community skills." : "Find your next exchange." : view === "listings" ? "Share what you know." : view === "requests" ? "Make an exchange happen." : view === "analytics" ? "Your activity at a glance." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? isAdmin ? "Browse skills shared by your community." : "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : view === "requests" ? "Track the requests you send and the offers you receive." : view === "analytics" ? "Review your listings, swap requests, and activity over the last six months." : "A good exchange starts with a little context about you."}</p></section>
+        <section className="dashboard-welcome"><p className="dashboard-eyebrow">YOUR SKILL SWAP</p><h1>{view === "discover" ? isAdmin ? "Explore community skills." : "Find your next exchange." : view === "listings" ? "Share what you know." : view === "requests" ? "Make an exchange happen." : view === "schedule" ? "See your scheduled swaps." : view === "analytics" ? "Your activity at a glance." : `Welcome, ${displayName}.`}</h1><h2 className="dashboard-welcome-test">testing production!</h2><p>{view === "discover" ? isAdmin ? "Browse skills shared by your community." : "Explore practical skills shared by your community." : view === "listings" ? "Create clear offers and keep your listings up to date." : view === "requests" ? "Track the requests you send and the offers you receive." : view === "schedule" ? "Check the confirmed time, duration, and meeting details for your exchanges." : view === "analytics" ? "Review your listings, swap requests, and activity over the last six months." : "A good exchange starts with a little context about you."}</p></section>
         {error && <p className="dashboard-message dashboard-error" role="alert">{error}</p>}{notice && <p className="dashboard-message dashboard-notice" role="status">{notice}</p>}
 
         {view === "profile" && <section className="profile-counter-grid" aria-label="Your community activity">
@@ -1068,6 +1199,79 @@ export default function SprintTwoWorkspace() {
                 {request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}
               </article>)}</div><DashboardPagination page={currentOutgoingRequestPage} pageSize={DISCOVERY_PAGE_SIZE} total={outgoingRequests.length} onPageChange={setOutgoingRequestPage} /></> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
             </section>
+          </>}
+        </section>}
+
+        {view === "schedule" && !isAdmin && <section className="swap-requests-view" aria-label="Scheduled swaps">
+          {loadingRequests ? <div className="empty-state" role="status">Loading scheduled swaps...</div> : requestLoadError ? <div className="empty-state" role="alert"><strong>Scheduled swaps are unavailable.</strong><span>{requestLoadError}</span></div> : <>
+            {calendarMonth && <section className="schedule-calendar" aria-labelledby="schedule-calendar-heading">
+              <div className="schedule-calendar-header">
+                <div>
+                  <h2 id="schedule-calendar-heading">Calendar</h2>
+                  <p>Times are shown in your local time zone.</p>
+                </div>
+                <div className="schedule-calendar-controls">
+                  <button className="secondary-action" type="button" aria-label="Previous month" onClick={() => {
+                    const previous = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1);
+                    setCalendarMonth(previous);
+                    setSelectedCalendarDay(calendarDateKey(previous));
+                  }}>‹</button>
+                  <strong>{new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(calendarMonth)}</strong>
+                  <button className="secondary-action" type="button" aria-label="Next month" onClick={() => {
+                    const next = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1);
+                    setCalendarMonth(next);
+                    setSelectedCalendarDay(calendarDateKey(next));
+                  }}>›</button>
+                  <button className="text-action" type="button" onClick={() => {
+                    const today = new Date();
+                    setCalendarMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+                    setSelectedCalendarDay(calendarDateKey(today));
+                    setCurrentTime(today.getTime());
+                  }}>Today</button>
+                </div>
+              </div>
+              <div className="schedule-calendar-grid" role="group" aria-label="Calendar days">
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((weekday) =>
+                  <span className="schedule-calendar-weekday" key={weekday}>{weekday}</span>)}
+                {calendarDates.map((date) => {
+                  const dateKey = calendarDateKey(date);
+                  const daySwaps = calendarEventsByDate.get(dateKey) ?? [];
+                  const isCurrentMonth = date.getMonth() === calendarMonth.getMonth();
+                  const isSelected = dateKey === selectedCalendarDay;
+                  return <button
+                    className={`schedule-calendar-day${isCurrentMonth ? "" : " outside-month"}${isSelected ? " selected" : ""}${daySwaps.length ? " has-swaps" : ""}`}
+                    type="button"
+                    key={dateKey}
+                    aria-label={`${date.toLocaleDateString(undefined, { dateStyle: "full" })}${daySwaps.length ? `, ${daySwaps.length} scheduled ${daySwaps.length === 1 ? "swap" : "swaps"}` : ", no scheduled swaps"}`}
+                    aria-pressed={isSelected}
+                    onClick={() => {
+                      setSelectedCalendarDay(dateKey);
+                      if (!isCurrentMonth) setCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1));
+                    }}
+                  >
+                    <span className="schedule-calendar-day-number">{date.getDate()}</span>
+                    {daySwaps.length > 0 && <span className="schedule-calendar-count">{daySwaps.length} {daySwaps.length === 1 ? "swap" : "swaps"}</span>}
+                  </button>;
+                })}
+              </div>
+              {scheduledSwaps.length > 0 && selectedCalendarDate && <section className="request-group schedule-calendar-selection" aria-labelledby="selected-schedule-day-heading">
+                <div className="results-heading"><h2 id="selected-schedule-day-heading">{selectedCalendarDate.toLocaleDateString(undefined, { dateStyle: "full" })}</h2></div>
+                {selectedDaySwaps.length ? <div className="request-list">{selectedDaySwaps.map((request) =>
+                  <ScheduledSwapCard key={request.id} request={request} listings={listings} currentUserId={user.uid} currentTime={currentTime} />)}</div> : <p className="schedule-calendar-empty">No scheduled swaps on this day.</p>}
+              </section>}
+            </section>}
+            {scheduledSwaps.length ? <>
+              {upcomingScheduledSwaps.length > 0 && <section className="request-group" aria-labelledby="upcoming-swaps-heading">
+                <div className="results-heading"><h2 id="upcoming-swaps-heading">Upcoming</h2><span>{upcomingScheduledSwaps.length} {upcomingScheduledSwaps.length === 1 ? "swap" : "swaps"}</span></div>
+                <div className="request-list">{upcomingScheduledSwaps.map((request) =>
+                  <ScheduledSwapCard key={request.id} request={request} listings={listings} currentUserId={user.uid} currentTime={currentTime} />)}</div>
+              </section>}
+              {pastScheduledSwaps.length > 0 && <section className="request-group" aria-labelledby="past-swaps-heading">
+                <div className="results-heading"><h2 id="past-swaps-heading">Past</h2><span>{pastScheduledSwaps.length} {pastScheduledSwaps.length === 1 ? "swap" : "swaps"}</span></div>
+                <div className="request-list">{pastScheduledSwaps.map((request) =>
+                  <ScheduledSwapCard key={request.id} request={request} listings={listings} currentUserId={user.uid} currentTime={currentTime} />)}</div>
+              </section>}
+            </> : <div className="empty-state"><strong>No scheduled swaps yet.</strong><span>Confirmed swap times will appear here.</span></div>}
           </>}
         </section>}
 
