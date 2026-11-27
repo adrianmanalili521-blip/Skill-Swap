@@ -4,7 +4,6 @@
 
 ```
 users/{userId}
-users/{userId}/privateAvailability/weekly
 skills/{skillId}
 swapRequests/{requestId}
 categoryRequests/{requestId}
@@ -69,16 +68,6 @@ Auto-ID document. One doc per skill listing a user offers.
 
 Members create and manage their own skill listings. Admins can pause, remove, and restore listings from `/admin`, but cannot create or swap skills. Removed listings are soft-moderated by changing `status` to `"removed"`; their documents are retained.
 
-### `users/{userId}/privateAvailability/weekly`
-
-Private recurring availability settings. Only the owning active user can read or update this document.
-
-| Field | Type | Notes |
-|---|---|---|
-| `weeklyAvailability` | map | Optional weekday keys (`sun` through `sat`), each with `startMinute` and `endMinute` in 15-minute increments |
-| `timeZone` | string | IANA time zone used to interpret the local weekly windows |
-| `updatedAt` | timestamp | Updated when the owner saves their schedule |
-
 ---
 
 ## `swapRequests/{requestId}`
@@ -94,19 +83,16 @@ Auto-ID document. Represents one user requesting a swap tied to a specific skill
 | `message` | string | optional note from requester |
 | `status` | `"pending"` \| `"accepted"` \| `"declined"` \| `"cancelled"` \| `"completed"` | |
 | `scheduledAt` | timestamp \| null | confirmed exchange date/time; null until a proposed time is confirmed |
-| `scheduleDurationMinutes` | integer | Fixed length of the combined session used when finding calendar matches |
-| `scheduleStatus` | `"proposed"` \| `"selected"` \| `"confirmed"` | absent until participants start scheduling |
-| `scheduleProposerId` | string \| null | participant who offered the current availability options |
-| `scheduleOptions` | list\<timestamp\> | New proposals contain one future time that matches both shared weekly schedules |
-| `scheduleSelectedIndex` | integer \| null | option selected by the other participant |
-| `scheduleTimeZone` | string | IANA timezone used when the availability options were proposed |
+| `scheduleDurationMinutes` | integer | Fixed length of the combined session |
+| `scheduleStatus` | `"proposed"` \| `"selected"` \| `"confirmed"` | new proposals move directly from `proposed` to `confirmed`; `selected` is retained for existing swaps |
+| `scheduleProposerId` | string \| null | participant who proposed the current time |
+| `scheduleOptions` | list\<timestamp\> | One-time future time proposals; new proposals contain one time |
+| `scheduleSelectedIndex` | integer \| null | proposed time confirmed by the other participant |
+| `scheduleTimeZone` | string | IANA timezone used when the time was proposed |
 | `scheduleMode` | `"online"` \| `"onsite"` | format selected by the participant proposing times |
 | `schedulePlatform` | string | online meeting platform, up to 80 characters |
 | `scheduleVenue` | string | onsite venue or meeting place, up to 240 characters |
 | `scheduleNote` | string | optional online meeting link or joining details, up to 240 characters |
-| `fromWeeklyAvailability` / `toWeeklyAvailability` | map | Participant-owned weekly windows copied to this accepted swap only when that participant shares them |
-| `fromAvailabilityTimeZone` / `toAvailabilityTimeZone` | string | Time zones for the shared participant availability maps |
-| `fromAvailabilityUpdatedAt` / `toAvailabilityUpdatedAt` | timestamp | Time each participant shared or refreshed their schedule |
 | `createdAt` | timestamp | |
 | `updatedAt` | timestamp | bumped on every status change; drive real-time UI (Sprint 3) off this |
 
@@ -116,7 +102,7 @@ The dashboard creates requests from active skill listings. A request starts as `
 
 Admins can read swap request records for platform analytics; only participants can create or change requests. User analytics are derived from that member's own listings and incoming/outgoing requests. The current dashboards aggregate client-readable records and are intended for the current MVP data volume.
 
-After acceptance, each participant explicitly shares their private weekly schedule with that swap. The calendar shows future start times that fit both participants' windows for the combined duration. Either participant can propose one matching time and choose online (platform and optional joining details) or onsite (venue); the other participant selects it, and the proposer confirms it. Either participant can propose a new matching time to reschedule. The confirmed time, duration, and meeting details are visible to both participants in the exchange workspace. Listing prices are informational only; payment processing is not included. Both participants can also send messages in the request's `messages` subcollection, and either may mark the exchange completed. Administrators may cancel pending requests for safety or moderation, but cannot accept, decline, or complete exchanges on behalf of participants. Every admin cancellation is written to `adminActivityLogs` in the same Firestore batch.
+After acceptance, either participant can propose one specific future date and time, choosing online (platform and optional joining details) or onsite (venue). The other participant confirms the proposed time directly or discusses another time in chat. Recurring availability is never shared. Either participant can propose a new time to reschedule. The confirmed time, duration, and meeting details are visible to both participants in the exchange workspace and swap request cards. Listing prices are informational only; payment processing is not included. Both participants can also send messages in the request's `messages` subcollection, and either may mark the exchange completed. Administrators may cancel pending requests for safety or moderation, but cannot accept, decline, or complete exchanges on behalf of participants. Every admin cancellation is written to `adminActivityLogs` in the same Firestore batch.
 
 ### `swapRequests/{requestId}/messages/{messageId}`
 

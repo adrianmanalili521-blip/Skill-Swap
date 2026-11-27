@@ -23,7 +23,7 @@ import { getAuthErrorMessage } from "@/lib/auth-errors";
 import { db } from "@/lib/firebase";
 import { useTheme } from "@/lib/theme-context";
 import { getRecentMonths, timestampMonthKey } from "@/lib/analytics";
-import { CommunityRankings, ExchangeWorkspace, IdVerificationForm, WeeklyAvailabilitySettings } from "./enhancement-panels";
+import { CommunityRankings, ExchangeWorkspace, IdVerificationForm } from "./enhancement-panels";
 import { DEFAULT_SKILL_DURATION_MINUTES, formatSkillPrice, SKILL_PRICE_CURRENCY } from "@/lib/skill-listing-format";
 
 type View = "discover" | "listings" | "requests" | "analytics" | "profile";
@@ -71,6 +71,14 @@ interface SwapRequest {
   message: string;
   status: SwapRequestStatus;
   createdAt?: { toMillis?: () => number };
+  scheduledAt?: Timestamp | null;
+  scheduleStatus?: "proposed" | "selected" | "confirmed";
+  scheduleOptions?: Timestamp[];
+  scheduleSelectedIndex?: number | null;
+  scheduleMode?: "online" | "onsite";
+  schedulePlatform?: string;
+  scheduleVenue?: string;
+  scheduleNote?: string;
 }
 
 type NotificationKind = "swap_request" | "swap_accepted" | "swap_declined" | "category_request";
@@ -138,6 +146,35 @@ function createdTime(listing: SkillListing) {
 
 function requestCreatedTime(request: SwapRequest) {
   return request.createdAt?.toMillis?.() ?? 0;
+}
+
+function requestScheduleSummary(request: SwapRequest) {
+  if (!request.scheduleMode) return "No time proposed yet";
+
+  const selectedTime = request.scheduleStatus === "confirmed" && request.scheduledAt
+    ? request.scheduledAt
+    : request.scheduleSelectedIndex !== null && request.scheduleSelectedIndex !== undefined
+      ? request.scheduleOptions?.[request.scheduleSelectedIndex]
+      : request.scheduleOptions?.[0];
+  const modeDetails = request.scheduleMode === "online"
+    ? ["Online", request.schedulePlatform].filter(Boolean).join(" · ")
+    : ["Onsite", request.scheduleVenue].filter(Boolean).join(" · ");
+  const status = request.scheduleStatus === "confirmed"
+    ? "Confirmed"
+    : request.scheduleStatus === "selected"
+      ? "Awaiting confirmation"
+      : "Proposed";
+  const date = selectedTime?.toDate().toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  return [
+    modeDetails,
+    status,
+    date,
+    request.scheduleMode === "online" ? request.scheduleNote : undefined,
+  ].filter(Boolean).join(" · ");
 }
 
 function notificationCreatedTime(notification: AppNotification) {
@@ -840,7 +877,7 @@ export default function SprintTwoWorkspace() {
           <article className="analytics-stat"><span>Requests sent</span><strong>{profile?.sentRequestCount ?? outgoingRequests.length}</strong></article>
           <article className="analytics-stat"><span>Requests received</span><strong>{profile?.receivedRequestCount ?? incomingRequests.length}</strong></article>
         </section>}
-        {view === "profile" && <div className="profile-enhancements"><CommunityRankings /><IdVerificationForm /><WeeklyAvailabilitySettings /></div>}
+        {view === "profile" && <div className="profile-enhancements"><CommunityRankings /><IdVerificationForm /></div>}
 
         {view === "discover" && <section aria-label="Discover skills">
           <div className="discover-tools"><label className="search-field"><span className="search-icon" aria-hidden="true">⌕</span><span className="visually-hidden">Search skills, tags, or people</span><input value={search} onChange={(event) => { setSearch(event.target.value); setDiscoveryPage(0); }} placeholder="Search skills, tags, or people" /></label><label className="category-filter"><span className="visually-hidden">Filter by category</span><select value={category} onChange={(event) => { setCategory(event.target.value); setDiscoveryPage(0); }}><option>All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label className="category-filter"><span className="visually-hidden">Sort listings</span><select value={discoverySort} onChange={(event) => { setDiscoverySort(event.target.value as typeof discoverySort); setDiscoveryPage(0); }}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="popular">Most requested</option><option value="title">Title A–Z</option></select></label>{!isAdmin && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); setView("listings"); }}><span aria-hidden="true">＋</span> Offer a skill</button>}</div>
@@ -862,11 +899,46 @@ export default function SprintTwoWorkspace() {
             <section className="request-group" aria-labelledby="incoming-requests-heading"><div className="results-heading"><h2 id="incoming-requests-heading">Received</h2><span>{incomingRequests.length} {incomingRequests.length === 1 ? "request" : "requests"}</span><label className="category-filter"><span className="visually-hidden">Sort received requests</span><select value={incomingRequestSort} onChange={(event) => { setIncomingRequestSort(event.target.value as typeof incomingRequestSort); setIncomingRequestPage(0); }}><option value="newest">Latest first</option><option value="oldest">Oldest first</option></select></label></div>
               {incomingRequests.length ? <><div className="request-list">{visibleIncomingRequests.map((request) => {
                 const requesterSkills = listings.filter((listing) => listing.ownerId === request.fromUserId && listing.status === "active");
-                return <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST RECEIVED</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">From a <Link href={`/profile/${request.fromUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{(request.status === "accepted" || request.status === "completed") && <ExchangeWorkspace requestId={request.id} currentUserId={user.uid} otherUserId={request.fromUserId} requestStatus={request.status} />}{request.status === "pending" && <><label className="dashboard-field request-offer-field"><span>Choose a skill from the requester</span><select value={selectedOfferSkills[request.id] ?? ""} onChange={(event) => setSelectedOfferSkills((current) => ({ ...current, [request.id]: event.target.value }))} required><option value="">Select an active skill</option>{requesterSkills.map((skill) => <option key={skill.id} value={skill.id}>{skill.title}</option>)}</select></label><div className="request-actions"><button className="secondary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "declined")}>Decline</button><button className="primary-action" type="button" disabled={processingRequestId !== null || requesterSkills.length === 0 || !selectedOfferSkills[request.id]} onClick={() => void updateSwapRequest(request, "accepted")}>{processingRequestId === request.id ? "Saving..." : "Accept"}</button></div>{requesterSkills.length === 0 && <p className="request-existing-status">The requester has no active skill listings to select, so this request cannot be accepted.</p>}</>}</article>;
+                return <article className="request-card" key={request.id}>
+                  <div className="request-card-heading">
+                    <div><p className="dashboard-eyebrow">REQUEST RECEIVED</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div>
+                    <span className={`request-status ${request.status}`}>{request.status}</span>
+                  </div>
+                  <p className="request-participant">From a <Link href={`/profile/${request.fromUserId}`}>community member</Link></p>
+                  {request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}
+                  {(request.status === "accepted" || request.status === "completed") && <p className="request-schedule-details">{requestScheduleSummary(request)}</p>}
+                  {request.message && <p className="request-message">{request.message}</p>}
+                  {(request.status === "accepted" || request.status === "completed") && <ExchangeWorkspace requestId={request.id} currentUserId={user.uid} otherUserId={request.fromUserId} requestStatus={request.status} />}
+                  {request.status === "pending" && <>
+                    <label className="dashboard-field request-offer-field">
+                      <span>Choose a skill from the requester</span>
+                      <select value={selectedOfferSkills[request.id] ?? ""} onChange={(event) => setSelectedOfferSkills((current) => ({ ...current, [request.id]: event.target.value }))} required>
+                        <option value="">Select an active skill</option>
+                        {requesterSkills.map((skill) => <option key={skill.id} value={skill.id}>{skill.title}</option>)}
+                      </select>
+                    </label>
+                    <div className="request-actions">
+                      <button className="secondary-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "declined")}>Decline</button>
+                      <button className="primary-action" type="button" disabled={processingRequestId !== null || requesterSkills.length === 0 || !selectedOfferSkills[request.id]} onClick={() => void updateSwapRequest(request, "accepted")}>{processingRequestId === request.id ? "Saving..." : "Accept"}</button>
+                    </div>
+                    {requesterSkills.length === 0 && <p className="request-existing-status">The requester has no active skill listings to select, so this request cannot be accepted.</p>}
+                  </>}
+                </article>;
               })}</div><DashboardPagination page={currentIncomingRequestPage} pageSize={DISCOVERY_PAGE_SIZE} total={incomingRequests.length} onPageChange={setIncomingRequestPage} /></> : <div className="empty-state"><strong>No requests received.</strong><span>When someone requests one of your skills, it will appear here.</span></div>}
             </section>
             <section className="request-group" aria-labelledby="outgoing-requests-heading"><div className="results-heading"><h2 id="outgoing-requests-heading">Sent</h2><span>{outgoingRequests.length} {outgoingRequests.length === 1 ? "request" : "requests"}</span><label className="category-filter"><span className="visually-hidden">Sort sent requests</span><select value={outgoingRequestSort} onChange={(event) => { setOutgoingRequestSort(event.target.value as typeof outgoingRequestSort); setOutgoingRequestPage(0); }}><option value="newest">Latest first</option><option value="oldest">Oldest first</option></select></label></div>
-              {outgoingRequests.length ? <><div className="request-list">{visibleOutgoingRequests.map((request) => <article className="request-card" key={request.id}><div className="request-card-heading"><div><p className="dashboard-eyebrow">REQUEST SENT</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div><span className={`request-status ${request.status}`}>{request.status}</span></div><p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>{request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}{request.message && <p className="request-message">{request.message}</p>}{(request.status === "accepted" || request.status === "completed") && <ExchangeWorkspace requestId={request.id} currentUserId={user.uid} otherUserId={request.toUserId} requestStatus={request.status} />}{request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}</article>)}</div><DashboardPagination page={currentOutgoingRequestPage} pageSize={DISCOVERY_PAGE_SIZE} total={outgoingRequests.length} onPageChange={setOutgoingRequestPage} /></> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
+              {outgoingRequests.length ? <><div className="request-list">{visibleOutgoingRequests.map((request) => <article className="request-card" key={request.id}>
+                <div className="request-card-heading">
+                  <div><p className="dashboard-eyebrow">REQUEST SENT</p><h3>{listings.find((listing) => listing.id === request.skillId)?.title ?? "Skill listing"}</h3></div>
+                  <span className={`request-status ${request.status}`}>{request.status}</span>
+                </div>
+                <p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>
+                {request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}
+                {(request.status === "accepted" || request.status === "completed") && <p className="request-schedule-details">{requestScheduleSummary(request)}</p>}
+                {request.message && <p className="request-message">{request.message}</p>}
+                {(request.status === "accepted" || request.status === "completed") && <ExchangeWorkspace requestId={request.id} currentUserId={user.uid} otherUserId={request.toUserId} requestStatus={request.status} />}
+                {request.status === "pending" && <div className="request-actions"><button className="secondary-action destructive-action" type="button" disabled={processingRequestId !== null} onClick={() => void updateSwapRequest(request, "cancelled")}>{processingRequestId === request.id ? "Saving..." : "Cancel request"}</button></div>}
+              </article>)}</div><DashboardPagination page={currentOutgoingRequestPage} pageSize={DISCOVERY_PAGE_SIZE} total={outgoingRequests.length} onPageChange={setOutgoingRequestPage} /></> : <div className="empty-state"><strong>No requests sent.</strong><span>Explore the community and request a skill to get started.</span></div>}
             </section>
           </>}
         </section>}

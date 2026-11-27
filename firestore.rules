@@ -34,34 +34,6 @@ service cloud.firestore {
       return value is int && value >= 15 && value <= 480;
     }
 
-    function validAvailabilityWindow(value, day) {
-      return !(day in value) || (
-        value[day] is map
-        && value[day].keys().hasOnly(['startMinute', 'endMinute'])
-        && value[day].keys().hasAll(['startMinute', 'endMinute'])
-        && value[day].startMinute is int
-        && value[day].startMinute >= 0
-        && value[day].startMinute < 1440
-        && value[day].startMinute % 15 == 0
-        && value[day].endMinute is int
-        && value[day].endMinute > value[day].startMinute
-        && value[day].endMinute < 1440
-        && value[day].endMinute % 15 == 0
-      );
-    }
-
-    function validWeeklyAvailability(value) {
-      return value is map
-        && value.keys().hasOnly(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'])
-        && validAvailabilityWindow(value, 'sun')
-        && validAvailabilityWindow(value, 'mon')
-        && validAvailabilityWindow(value, 'tue')
-        && validAvailabilityWindow(value, 'wed')
-        && validAvailabilityWindow(value, 'thu')
-        && validAvailabilityWindow(value, 'fri')
-        && validAvailabilityWindow(value, 'sat');
-    }
-
     // ---------- users/{userId} ----------
     // Profile info is readable by active signed-in users (needed for
     // browsing skills/listings and seeing who posted them).
@@ -155,25 +127,6 @@ service cloud.firestore {
                         )
                       );
       allow delete: if isAdmin();
-    }
-
-    match /users/{userId}/privateAvailability/{availabilityId} {
-      allow read: if availabilityId == 'weekly' && isActiveUser() && isOwner(userId);
-      allow create, update: if availabilityId == 'weekly'
-                            && isActiveUser()
-                            && isOwner(userId)
-                            && request.resource.data.keys().hasOnly([
-                              'weeklyAvailability', 'timeZone', 'updatedAt'
-                            ])
-                            && request.resource.data.keys().hasAll([
-                              'weeklyAvailability', 'timeZone', 'updatedAt'
-                            ])
-                            && validWeeklyAvailability(request.resource.data.weeklyAvailability)
-                            && request.resource.data.timeZone is string
-                            && request.resource.data.timeZone.size() > 0
-                            && request.resource.data.timeZone.size() <= 80
-                            && request.resource.data.updatedAt is timestamp;
-      allow delete: if availabilityId == 'weekly' && isActiveUser() && isOwner(userId);
     }
 
     // ---------- skills/{skillId} ----------
@@ -509,43 +462,10 @@ service cloud.firestore {
                         !('scheduleDurationMinutes' in resource.data)
                         || request.resource.data.scheduleDurationMinutes == resource.data.scheduleDurationMinutes
                       )
-                      && validWeeklyAvailability(resource.data.fromWeeklyAvailability)
-                      && validWeeklyAvailability(resource.data.toWeeklyAvailability)
-                      && resource.data.fromAvailabilityTimeZone is string
-                      && resource.data.toAvailabilityTimeZone is string
                       && request.resource.data.scheduleOptions is list
-                      && request.resource.data.scheduleOptions.size() >= 1
-                      && request.resource.data.scheduleOptions.size() <= 5
+                      && request.resource.data.scheduleOptions.size() == 1
                       && request.resource.data.scheduleOptions[0] is timestamp
                       && request.resource.data.scheduleOptions[0] > request.time
-                      && (
-                        request.resource.data.scheduleOptions.size() < 2
-                        || (
-                          request.resource.data.scheduleOptions[1] is timestamp
-                          && request.resource.data.scheduleOptions[1] > request.time
-                        )
-                      )
-                      && (
-                        request.resource.data.scheduleOptions.size() < 3
-                        || (
-                          request.resource.data.scheduleOptions[2] is timestamp
-                          && request.resource.data.scheduleOptions[2] > request.time
-                        )
-                      )
-                      && (
-                        request.resource.data.scheduleOptions.size() < 4
-                        || (
-                          request.resource.data.scheduleOptions[3] is timestamp
-                          && request.resource.data.scheduleOptions[3] > request.time
-                        )
-                      )
-                      && (
-                        request.resource.data.scheduleOptions.size() < 5
-                        || (
-                          request.resource.data.scheduleOptions[4] is timestamp
-                          && request.resource.data.scheduleOptions[4] > request.time
-                        )
-                      )
                       && request.resource.data.scheduleSelectedIndex == null
                       && request.resource.data.scheduleMode in ['online', 'onsite']
                       && request.resource.data.scheduleTimeZone is string
@@ -577,35 +497,21 @@ service cloud.firestore {
                       && isActiveUser()
                       && !isAdmin()
                       && resource.data.status == 'accepted'
+                      && resource.data.scheduleStatus == 'proposed'
+                      && request.auth.uid != resource.data.scheduleProposerId
                       && request.resource.data.status == resource.data.status
                       && request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['fromWeeklyAvailability', 'fromAvailabilityTimeZone', 'fromAvailabilityUpdatedAt', 'updatedAt'])
-                      && request.resource.data.diff(resource.data).affectedKeys()
-                        .hasAny(['fromWeeklyAvailability', 'fromAvailabilityTimeZone', 'fromAvailabilityUpdatedAt'])
-                      && request.auth.uid == resource.data.fromUserId
-                      && validWeeklyAvailability(request.resource.data.fromWeeklyAvailability)
-                      && request.resource.data.fromAvailabilityTimeZone is string
-                      && request.resource.data.fromAvailabilityTimeZone.size() > 0
-                      && request.resource.data.fromAvailabilityTimeZone.size() <= 80
-                      && request.resource.data.fromAvailabilityUpdatedAt == request.time
-                      && request.resource.data.updatedAt == request.time
-                    ) || (
-                      isParticipant(resource.data)
-                      && isActiveUser()
-                      && !isAdmin()
-                      && resource.data.status == 'accepted'
-                      && request.resource.data.status == resource.data.status
-                      && request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['toWeeklyAvailability', 'toAvailabilityTimeZone', 'toAvailabilityUpdatedAt', 'updatedAt'])
-                      && request.resource.data.diff(resource.data).affectedKeys()
-                        .hasAny(['toWeeklyAvailability', 'toAvailabilityTimeZone', 'toAvailabilityUpdatedAt'])
-                      && request.auth.uid == resource.data.toUserId
-                      && validWeeklyAvailability(request.resource.data.toWeeklyAvailability)
-                      && request.resource.data.toAvailabilityTimeZone is string
-                      && request.resource.data.toAvailabilityTimeZone.size() > 0
-                      && request.resource.data.toAvailabilityTimeZone.size() <= 80
-                      && request.resource.data.toAvailabilityUpdatedAt == request.time
-                      && request.resource.data.updatedAt == request.time
+                        .hasOnly(['scheduleStatus', 'scheduleSelectedIndex', 'scheduledAt', 'updatedAt'])
+                      && request.resource.data.scheduleStatus == 'confirmed'
+                      && resource.data.scheduleOptions is list
+                      && request.resource.data.scheduleSelectedIndex is int
+                      && request.resource.data.scheduleSelectedIndex >= 0
+                      && request.resource.data.scheduleSelectedIndex < resource.data.scheduleOptions.size()
+                      && resource.data.scheduleOptions[request.resource.data.scheduleSelectedIndex] is timestamp
+                      && resource.data.scheduleOptions[request.resource.data.scheduleSelectedIndex] > request.time
+                      && request.resource.data.scheduledAt
+                        == resource.data.scheduleOptions[request.resource.data.scheduleSelectedIndex]
+                      && request.resource.data.updatedAt is timestamp
                     ) || (
                       isParticipant(resource.data)
                       && isActiveUser()

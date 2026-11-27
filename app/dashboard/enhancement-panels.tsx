@@ -22,132 +22,6 @@ import { useAuth } from "@/lib/auth-context";
 import { getAuthErrorMessage } from "@/lib/auth-errors";
 import { db, storage } from "@/lib/firebase";
 import { DEFAULT_SKILL_DURATION_MINUTES } from "@/lib/skill-listing-format";
-import {
-  AVAILABILITY_DAYS,
-  isValidTimeZone,
-  minuteToTime,
-  parseWeeklyAvailability,
-  getAvailableTimesForDate,
-  localDateInput,
-  timeToMinute,
-  type AvailabilityDay,
-  type WeeklyAvailability,
-} from "@/lib/weekly-availability";
-
-type AvailabilityDraft = Record<AvailabilityDay, {
-  enabled: boolean;
-  start: string;
-  end: string;
-}>;
-
-function availabilityDraftFrom(value: WeeklyAvailability = {}): AvailabilityDraft {
-  return Object.fromEntries(AVAILABILITY_DAYS.map(({ key }) => {
-    const window = value[key];
-    return [key, {
-      enabled: Boolean(window),
-      start: minuteToTime(window?.startMinute ?? 9 * 60),
-      end: minuteToTime(window?.endMinute ?? 17 * 60),
-    }];
-  })) as AvailabilityDraft;
-}
-
-interface PrivateAvailabilityRecord {
-  weeklyAvailability: WeeklyAvailability;
-  timeZone: string;
-  updatedAt?: Timestamp;
-}
-
-export function WeeklyAvailabilitySettings() {
-  const { user } = useAuth();
-  const [draft, setDraft] = useState<AvailabilityDraft>(() => availabilityDraftFrom());
-  const [timeZone, setTimeZone] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!user) return;
-    let active = true;
-    void getDoc(doc(db, "users", user.uid, "privateAvailability", "weekly"))
-      .then((snapshot) => {
-        if (!active) return;
-        const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-        if (!snapshot.exists()) {
-          setTimeZone(browserTimeZone);
-          return;
-        }
-        const data = snapshot.data();
-        const availability = parseWeeklyAvailability(data.weeklyAvailability);
-        const savedTimeZone = typeof data.timeZone === "string" ? data.timeZone : "";
-        if (!availability || !isValidTimeZone(savedTimeZone)) {
-          setError("Your saved weekly availability is invalid. Update it and save again.");
-          return;
-        }
-        setDraft(availabilityDraftFrom(availability));
-        setTimeZone(savedTimeZone);
-      })
-      .catch((loadError: unknown) => {
-        if (active) setError(`Unable to load weekly availability: ${getAuthErrorMessage(loadError)}`);
-      })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [user]);
-
-  async function saveAvailability(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!user || busy) return;
-    const weeklyAvailability: WeeklyAvailability = {};
-    for (const { key, label } of AVAILABILITY_DAYS) {
-      const entry = draft[key];
-      if (!entry.enabled) continue;
-      const startMinute = timeToMinute(entry.start);
-      const endMinute = timeToMinute(entry.end);
-      if (startMinute === null || endMinute === null || endMinute >= 1440 || endMinute <= startMinute
-        || startMinute % 15 !== 0 || endMinute % 15 !== 0) {
-        setError(`${label}: choose a valid 15-minute time range where the end is after the start.`);
-        return;
-      }
-      weeklyAvailability[key] = { startMinute, endMinute };
-    }
-    const currentTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await setDoc(doc(db, "users", user.uid, "privateAvailability", "weekly"), {
-        weeklyAvailability,
-        timeZone: currentTimeZone,
-        updatedAt: serverTimestamp(),
-      });
-      setTimeZone(currentTimeZone);
-      setNotice("Weekly availability saved. Share it from an accepted swap to use it for booking.");
-    } catch (saveError) {
-      setError(`Unable to save weekly availability: ${getAuthErrorMessage(saveError)}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return <section className="dashboard-card availability-settings" aria-labelledby="weekly-availability-heading">
-    <div className="dashboard-card-heading"><div><p className="dashboard-eyebrow">SCHEDULING</p><h2 id="weekly-availability-heading">Weekly availability</h2></div></div>
-    <p className="availability-description">Set one recurring time window per day. Only you can see this profile setting; it is shared with a partner only after a swap is accepted.</p>
-    {error && <p className="dashboard-message dashboard-error" role="alert">{error}</p>}
-    {notice && <p className="dashboard-message dashboard-notice" role="status">{notice}</p>}
-    <form className="availability-form" onSubmit={(event) => void saveAvailability(event)}>
-      <p className="availability-time-zone">Times use {timeZone || "your local time zone"}.</p>
-      {AVAILABILITY_DAYS.map(({ key, label }) => <div className="availability-day" key={key}>
-        <label><input type="checkbox" checked={draft[key].enabled} onChange={(event) => setDraft((current) => ({ ...current, [key]: { ...current[key], enabled: event.target.checked } }))} /><span>{label}</span></label>
-        {draft[key].enabled && <div className="availability-time-range">
-          <input type="time" step={900} aria-label={`${label} available from`} value={draft[key].start} onChange={(event) => setDraft((current) => ({ ...current, [key]: { ...current[key], start: event.target.value } }))} />
-          <span>to</span>
-          <input type="time" step={900} aria-label={`${label} available until`} value={draft[key].end} onChange={(event) => setDraft((current) => ({ ...current, [key]: { ...current[key], end: event.target.value } }))} />
-        </div>}
-      </div>)}
-      <button className="primary-action" type="submit" disabled={busy || loading}>{busy ? "Saving..." : "Save weekly availability"}</button>
-    </form>
-  </section>;
-}
 
 interface ExchangeRecord {
   id: string;
@@ -166,12 +40,6 @@ interface ExchangeRecord {
   scheduleMode?: "online" | "onsite";
   schedulePlatform?: string;
   scheduleVenue?: string;
-  fromWeeklyAvailability?: unknown;
-  fromAvailabilityTimeZone?: string;
-  fromAvailabilityUpdatedAt?: Timestamp | null;
-  toWeeklyAvailability?: unknown;
-  toAvailabilityTimeZone?: string;
-  toAvailabilityUpdatedAt?: Timestamp | null;
 }
 
 interface ChatMessage {
@@ -207,6 +75,12 @@ function isFutureDate(value: Date) {
   return value.getTime() > Date.now();
 }
 
+function localDateTimeInput(value: Date) {
+  const date = `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  const time = `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+  return `${date}T${time}`;
+}
+
 function scheduleOptionLabel(value: Timestamp, timeZone?: string) {
   const localTime = value.toDate().toLocaleString(undefined, {
     dateStyle: "medium",
@@ -229,11 +103,7 @@ export function ExchangeWorkspace({
   const [record, setRecord] = useState<ExchangeRecord | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
-  const [myAvailability, setMyAvailability] = useState<PrivateAvailabilityRecord | null>(null);
-  const [availabilityLoading, setAvailabilityLoading] = useState(true);
-  const [selectedCalendarDate, setSelectedCalendarDate] = useState("");
   const [selectedScheduleTime, setSelectedScheduleTime] = useState("");
-  const [calendarNow, setCalendarNow] = useState(0);
   const [scheduleMode, setScheduleMode] = useState<"online" | "onsite">("online");
   const [schedulePlatform, setSchedulePlatform] = useState("");
   const [scheduleVenue, setScheduleVenue] = useState("");
@@ -282,36 +152,6 @@ export function ExchangeWorkspace({
     return () => { active = false; };
   }, [currentUserId, requestId, requestStatus]);
 
-  useEffect(() => {
-    let active = true;
-    void getDoc(doc(db, "users", currentUserId, "privateAvailability", "weekly"))
-      .then((snapshot) => {
-        if (!active) return;
-        if (!snapshot.exists()) {
-          setMyAvailability(null);
-          return;
-        }
-        const data = snapshot.data();
-        const weeklyAvailability = parseWeeklyAvailability(data.weeklyAvailability);
-        const timeZone = typeof data.timeZone === "string" ? data.timeZone : "";
-        if (!weeklyAvailability || !isValidTimeZone(timeZone)) {
-          setError("Your saved weekly availability is invalid. Update it in your profile before scheduling.");
-          setMyAvailability(null);
-          return;
-        }
-        setMyAvailability({
-          weeklyAvailability,
-          timeZone,
-          updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt : undefined,
-        });
-      })
-      .catch((availabilityError: unknown) => {
-        if (active) setError(`Unable to load your weekly availability: ${getAuthErrorMessage(availabilityError)}`);
-      })
-      .finally(() => { if (active) setAvailabilityLoading(false); });
-    return () => { active = false; };
-  }, [currentUserId]);
-
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = message.trim();
@@ -335,9 +175,9 @@ export function ExchangeWorkspace({
   async function submitScheduleProposal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
-    const date = availableTimes.find((candidate) => candidate.toISOString() === selectedScheduleTime);
-    if (!date) {
-      setError("Choose a calendar time that fits both participants' shared availability.");
+    const date = new Date(selectedScheduleTime);
+    if (!selectedScheduleTime || Number.isNaN(date.getTime())) {
+      setError("Choose a valid date and time.");
       return;
     }
     if (!isFutureDate(date)) {
@@ -363,7 +203,7 @@ export function ExchangeWorkspace({
         scheduleSelectedIndex: null,
         scheduleDurationMinutes: record?.durationMinutes ?? DEFAULT_SKILL_DURATION_MINUTES * 2,
         scheduleMode,
-        scheduleTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        scheduleTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         schedulePlatform: scheduleMode === "online" ? schedulePlatform.trim() : "",
         scheduleVenue: scheduleMode === "onsite" ? scheduleVenue.trim() : "",
         scheduleNote: scheduleMode === "online" ? scheduleNote.trim() : "",
@@ -375,65 +215,26 @@ export function ExchangeWorkspace({
       setScheduleVenue("");
       setScheduleNote("");
       setShowProposalForm(false);
-      setNotice("Your available times were sent to your swap partner.");
+      setNotice("Your proposed time was sent to your swap partner.");
     } catch (proposalError) {
       setError(getAuthErrorMessage(proposalError));
     } finally {
       setBusy(false);
     }
-
   }
 
-  async function shareAvailability() {
-    if (!record || !myAvailability || busy || requestStatus !== "accepted") return;
-    const prefix = record.fromUserId === currentUserId ? "from" : "to";
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await updateDoc(doc(db, "swapRequests", requestId), {
-        [`${prefix}WeeklyAvailability`]: myAvailability.weeklyAvailability,
-        [`${prefix}AvailabilityTimeZone`]: myAvailability.timeZone,
-        [`${prefix}AvailabilityUpdatedAt`]: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      setNotice("Your weekly availability is now shared with your swap partner.");
-    } catch (shareError) {
-      setError(getAuthErrorMessage(shareError));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function selectScheduleOption(index: number) {
-    if (requestStatus !== "accepted" || !record || busy || record.scheduleStatus !== "proposed"
-      || record.scheduleProposerId === currentUserId || index < 0
-      || index >= (record.scheduleOptions?.length ?? 0)) return;
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await updateDoc(doc(db, "swapRequests", requestId), {
-        scheduleStatus: "selected",
-        scheduleSelectedIndex: index,
-        updatedAt: serverTimestamp(),
-      });
-      setNotice("You selected a time. Your partner needs to confirm it.");
-    } catch (selectionError) {
-      setError(getAuthErrorMessage(selectionError));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function confirmSchedule() {
-    if (requestStatus !== "accepted" || !record || busy || record.scheduleStatus !== "selected"
-      || record.scheduleProposerId !== currentUserId) return;
-    const selectedIndex = record.scheduleSelectedIndex;
+  async function confirmSchedule(proposedOptionIndex?: number) {
+    if (requestStatus !== "accepted" || !record || busy) return;
+    const confirmingProposal = record.scheduleStatus === "proposed"
+      && record.scheduleProposerId !== currentUserId;
+    const confirmingLegacySelection = record.scheduleStatus === "selected"
+      && record.scheduleProposerId === currentUserId;
+    if (!confirmingProposal && !confirmingLegacySelection) return;
+    const selectedIndex = confirmingProposal ? proposedOptionIndex : record.scheduleSelectedIndex;
     const selectedTime = selectedIndex === null || selectedIndex === undefined
       ? undefined
       : record.scheduleOptions?.[selectedIndex];
-    if (!selectedTime || selectedTime.toMillis() <= Date.now()) {
+    if (!selectedTime || !isFutureDate(selectedTime.toDate())) {
       setError("That proposed time has passed. Send new available times instead.");
       return;
     }
@@ -443,6 +244,7 @@ export function ExchangeWorkspace({
     try {
       await updateDoc(doc(db, "swapRequests", requestId), {
         scheduleStatus: "confirmed",
+        scheduleSelectedIndex: selectedIndex,
         scheduledAt: selectedTime,
         updatedAt: serverTimestamp(),
       });
@@ -501,31 +303,6 @@ export function ExchangeWorkspace({
     : record.scheduleOptions?.[record.scheduleSelectedIndex];
   const hasConfirmedSchedule = Boolean(record?.scheduledAt)
     && (record?.scheduleStatus === "confirmed" || !record?.scheduleStatus);
-  const fromAvailability = parseWeeklyAvailability(record?.fromWeeklyAvailability);
-  const toAvailability = parseWeeklyAvailability(record?.toWeeklyAvailability);
-  const fromTimeZone = record?.fromAvailabilityTimeZone;
-  const toTimeZone = record?.toAvailabilityTimeZone;
-  const schedulingReady = Boolean(fromAvailability && toAvailability
-    && fromTimeZone && toTimeZone
-    && isValidTimeZone(fromTimeZone) && isValidTimeZone(toTimeZone));
-  const ownAvailabilityShared = record?.fromUserId === currentUserId
-    ? Boolean(record?.fromWeeklyAvailability && record.fromAvailabilityTimeZone)
-    : Boolean(record?.toWeeklyAvailability && record.toAvailabilityTimeZone);
-  const ownSharedAt = record?.fromUserId === currentUserId
-    ? record?.fromAvailabilityUpdatedAt
-    : record?.toAvailabilityUpdatedAt;
-  const ownAvailabilityIsCurrent = Boolean(myAvailability?.updatedAt && ownSharedAt
-    && ownSharedAt.toMillis() >= myAvailability.updatedAt.toMillis());
-  const availableTimes = !selectedCalendarDate || !fromAvailability || !toAvailability || !fromTimeZone || !toTimeZone
-    ? []
-    : getAvailableTimesForDate(
-      selectedCalendarDate,
-      sessionDuration,
-      fromAvailability,
-      fromTimeZone,
-      toAvailability,
-      toTimeZone,
-    ).filter((time) => time.getTime() > calendarNow);
 
   if (requestStatus !== "accepted" && requestStatus !== "completed") return null;
 
@@ -546,23 +323,15 @@ export function ExchangeWorkspace({
           {record.scheduleMode === "onsite" && <p>Onsite · {record.scheduleVenue || record.scheduleNote}</p>}
           {!record.scheduleMode && record.scheduleNote && <p>{record.scheduleNote}</p>}
         </div>}
-        {requestStatus === "accepted" && <div className="exchange-availability-sharing">
-          <p className="exchange-chat-empty">Your private weekly schedule is visible only to you until you share it here. Your partner must also share theirs before calendar times can be offered.</p>
-          {availabilityLoading
-            ? <p className="exchange-chat-empty">Loading your weekly availability...</p>
-            : myAvailability
-              ? <div className="exchange-availability-row"><span className="exchange-chat-empty">{!ownAvailabilityShared ? "Your schedule has not been shared with this partner yet." : ownAvailabilityIsCurrent ? "Your current schedule is shared with this partner." : "Your private schedule changed after it was shared; refresh it before proposing a time."}</span><button className="text-action" type="button" disabled={busy} onClick={() => void shareAvailability()}>{ownAvailabilityShared && ownAvailabilityIsCurrent ? "Refresh shared schedule" : "Share updated schedule"}</button></div>
-              : <p className="exchange-chat-empty">Add weekly availability in your <Link href="/dashboard">profile settings</Link> before scheduling.</p>}
-        </div>}
-        {requestStatus === "accepted" && !schedulingReady && <p className="exchange-chat-empty">Calendar booking will be available once both participants share a valid weekly schedule.</p>}
+        {requestStatus === "accepted" && <p className="exchange-chat-empty">Propose one specific future time and choose Online or Onsite. Only that time and its meeting details are shared.</p>}
         {record?.scheduleStatus === "proposed" && <>
           <p className="exchange-chat-empty">{record.scheduleProposerId === currentUserId
-            ? "Your available times are waiting for your partner to choose."
-            : "Your partner shared these available times. Choose one or suggest another set."}</p>
+            ? "Your proposed time is waiting for your partner to confirm."
+            : "Your partner proposed this time. Confirm it or discuss another time in chat."}</p>
           <ul className="exchange-schedule-options">
             {(record.scheduleOptions ?? []).map((option, index) => <li key={`${option.toMillis()}-${index}`}>
               <span>{scheduleOptionLabel(option, record.scheduleTimeZone)}</span>
-              {requestStatus === "accepted" && record.scheduleProposerId !== currentUserId && <button className="secondary-action" type="button" disabled={busy} onClick={() => void selectScheduleOption(index)}>Choose this time</button>}
+              {requestStatus === "accepted" && record.scheduleProposerId !== currentUserId && <button className="secondary-action" type="button" disabled={busy} onClick={() => void confirmSchedule(index)}>{busy ? "Confirming..." : "Confirm this time"}</button>}
             </li>)}
           </ul>
         </>}
@@ -572,22 +341,21 @@ export function ExchangeWorkspace({
         {record?.scheduleStatus === "selected" && selectedScheduleOption && <>
           <p className="exchange-schedule-current">Selected time: {scheduleOptionLabel(selectedScheduleOption, record.scheduleTimeZone)}</p>
           {record.scheduleProposerId === currentUserId
-            ? <button className="primary-action" type="button" disabled={busy} onClick={() => void confirmSchedule()}>Confirm this time</button>
+            ? <button className="primary-action" type="button" disabled={busy} onClick={() => void confirmSchedule()}>Confirm selected time</button>
             : <p className="exchange-chat-empty">Waiting for your partner to confirm this time.</p>}
         </>}
         {requestStatus === "accepted" && (showProposalForm
           ? <form className="exchange-schedule-form" onSubmit={(event) => void submitScheduleProposal(event)}>
-            <h4>Choose a time from the shared calendar</h4>
-            <p className="exchange-chat-empty">Only times that fit both participants&apos; weekly availability for {sessionDuration} minutes are shown.</p>
-            <label className="dashboard-field"><span>Calendar date</span><input type="date" value={selectedCalendarDate} onChange={(event) => { setSelectedCalendarDate(event.target.value); setSelectedScheduleTime(""); }} required /></label>
-            <label className="dashboard-field"><span>Available start time</span><select value={selectedScheduleTime} onChange={(event) => setSelectedScheduleTime(event.target.value)} required disabled={!schedulingReady || availableTimes.length === 0}><option value="">{availableTimes.length ? "Choose a time" : "No matching times for this date"}</option>{availableTimes.map((time) => <option key={time.toISOString()} value={time.toISOString()}>{time.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</option>)}</select></label>
+            <h4>Propose a time</h4>
+            <p className="exchange-chat-empty">Choose a future date and time. Your partner can confirm it or discuss a different time in chat.</p>
+            <label className="dashboard-field"><span>Date and time</span><input type="datetime-local" value={selectedScheduleTime} min={localDateTimeInput(new Date())} step={900} onChange={(event) => setSelectedScheduleTime(event.target.value)} required /></label>
             <label className="dashboard-field"><span>Meeting format</span><select value={scheduleMode} onChange={(event) => setScheduleMode(event.target.value as typeof scheduleMode)}><option value="online">Online</option><option value="onsite">Onsite</option></select></label>
             {scheduleMode === "online"
               ? <><label className="dashboard-field"><span>Online platform</span><input value={schedulePlatform} onChange={(event) => setSchedulePlatform(event.target.value)} maxLength={80} placeholder="e.g. Google Meet, Zoom, Discord" required /></label><label className="dashboard-field"><span>Meeting link or instructions <small>Optional</small></span><input value={scheduleNote} onChange={(event) => setScheduleNote(event.target.value)} maxLength={240} placeholder="Add a link or joining details" /></label></>
               : <label className="dashboard-field"><span>Venue or meeting place <small>Choose a public place</small></span><input value={scheduleVenue} onChange={(event) => setScheduleVenue(event.target.value)} maxLength={240} placeholder="e.g. library, campus, or public cafe" required /></label>}
-            <div className="exchange-schedule-actions"><button className="secondary-action" type="button" onClick={() => setShowProposalForm(false)}>Cancel</button><button className="primary-action" type="submit" disabled={busy || !schedulingReady || !selectedScheduleTime}>{busy ? "Sending..." : "Propose this time"}</button></div>
+            <div className="exchange-schedule-actions"><button className="secondary-action" type="button" onClick={() => setShowProposalForm(false)}>Cancel</button><button className="primary-action" type="submit" disabled={busy || !selectedScheduleTime}>{busy ? "Sending..." : "Propose this time"}</button></div>
           </form>
-          : <button className="secondary-action" type="button" disabled={!schedulingReady} onClick={() => { const now = new Date(); setCalendarNow(now.getTime()); setSelectedCalendarDate(localDateInput(now)); setSelectedScheduleTime(""); setShowProposalForm(true); }}>{record?.scheduleStatus ? "Suggest a new calendar time" : "Choose a calendar time"}</button>)}
+          : <button className="secondary-action" type="button" onClick={() => { setSelectedScheduleTime(""); setShowProposalForm(true); }}>{record?.scheduleStatus ? "Suggest a new time" : "Propose a time"}</button>)}
       </section>
       <section className="exchange-tool-card" aria-label="Private exchange chat">
         <h4>Exchange chat</h4>
