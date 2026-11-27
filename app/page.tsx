@@ -10,7 +10,7 @@ import { useTheme } from "@/lib/theme-context";
 type AuthMode = "signin" | "signup";
 
 export default function Home() {
-  const { user, loading, signIn, signUp, signInWithGoogle } = useAuth();
+  const { user, loading, authError, signIn, signUp, signInWithGoogle } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const router = useRouter();
   const [mode, setMode] = useState<AuthMode>("signin");
@@ -63,6 +63,8 @@ export default function Home() {
       setError("Theme changed on this device, but account sync was unavailable.");
     }
   }
+
+  const displayedError = error ?? (authError ? getAuthErrorMessage(authError) : null);
 
   return (
     <main className="auth-shell">
@@ -182,7 +184,7 @@ export default function Home() {
                   />
                 </label>
 
-                {error && <p className="form-error" role="alert">{error}</p>}
+                {displayedError && <p className="form-error" role="alert">{displayedError}</p>}
 
                 <button className="submit-button" type="submit" disabled={submitting}>
                   {submitting
