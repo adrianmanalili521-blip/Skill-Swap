@@ -118,11 +118,17 @@ Auto-ID document. Created atomically with the related swap request or decision.
 | `recipientId` | string | user who receives the notification |
 | `actorId` | string | user who initiated the request or decision |
 | `requestId` | string | related swap or category request document |
-| `kind` | `"swap_request"` \| `"swap_accepted"` \| `"swap_declined"` \| `"category_request"` | event represented by this notification |
+| `kind` | `"swap_request"` \| `"swap_accepted"` \| `"swap_declined"` \| `"category_request"` \| `"schedule_proposed"` \| `"schedule_confirmed"` | event represented by this notification |
 | `read` | boolean | recipients can mark their notifications as read |
 | `createdAt` | timestamp | server timestamp |
+| `startAt` | timestamp | schedule notifications only; proposed or confirmed start time |
+| `durationMinutes` | integer (1–960) | schedule notifications only; used to display the calculated end time |
+| `scheduleMode` | `"online"` \| `"onsite"` | schedule notifications only |
+| `scheduleTimeZone` | string | schedule notifications only; IANA time zone selected by the proposer |
+| `schedulePlatform` | string | schedule notifications only; online platform, up to 80 characters |
+| `scheduleVenue` | string | schedule notifications only; onsite venue, up to 240 characters |
 
-Notifications stream live in the dashboard. Recipients can mark one notification read by opening it, or mark all as read. Category request notifications are delivered to active admin accounts and open the admin review panel.
+Notifications stream live in the dashboard. Schedule notifications display the start and calculated end times, duration, and online platform or onsite venue. Recipients can mark one notification read by opening it, or mark all as read. Category request notifications are delivered to active admin accounts and open the admin review panel.
 
 ---
 

@@ -81,7 +81,13 @@ interface SwapRequest {
   scheduleNote?: string;
 }
 
-type NotificationKind = "swap_request" | "swap_accepted" | "swap_declined" | "category_request";
+type NotificationKind =
+  | "swap_request"
+  | "swap_accepted"
+  | "swap_declined"
+  | "category_request"
+  | "schedule_proposed"
+  | "schedule_confirmed";
 
 interface AppNotification {
   id: string;
@@ -91,6 +97,12 @@ interface AppNotification {
   kind: NotificationKind;
   read: boolean;
   createdAt?: { toMillis?: () => number };
+  startAt?: Timestamp;
+  durationMinutes?: number;
+  scheduleMode?: "online" | "onsite";
+  scheduleTimeZone?: string;
+  schedulePlatform?: string;
+  scheduleVenue?: string;
 }
 
 interface SwapRequestSnapshotState {
@@ -177,8 +189,75 @@ function requestScheduleSummary(request: SwapRequest) {
   ].filter(Boolean).join(" · ");
 }
 
+function RequestExchangeDetails({
+  request,
+  listings,
+  direction,
+}: {
+  request: SwapRequest;
+  listings: SkillListing[];
+  direction: "sent" | "received";
+}) {
+  const requestedListing = listings.find((listing) => listing.id === request.skillId);
+  const offeredListing = request.offeredSkillId
+    ? listings.find((listing) => listing.id === request.offeredSkillId)
+    : undefined;
+  const userOffers = direction === "sent"
+    ? offeredListing?.title ?? "Selected when accepted"
+    : requestedListing?.title ?? "Requested skill";
+  const userReceives = direction === "sent"
+    ? requestedListing?.title ?? "Requested skill"
+    : offeredListing?.title ?? "Choose a skill from the requester";
+  const duration = typeof request.durationMinutes === "number"
+    ? `${request.durationMinutes} min combined`
+    : `${listingDuration(requestedListing)} min for the requested skill; total set on acceptance`;
+
+  return <div className="request-exchange-details">
+    <div><span>You offer</span><strong>{userOffers}</strong></div>
+    <div><span>You receive</span><strong>{userReceives}</strong></div>
+    <div><span>Duration</span><strong>{duration}</strong></div>
+  </div>;
+}
+
 function notificationCreatedTime(notification: AppNotification) {
   return notification.createdAt?.toMillis?.() ?? 0;
+}
+
+function notificationMessage(notification: AppNotification) {
+  if (notification.kind === "category_request") return "A member requested a new skill category.";
+  if (notification.kind === "swap_request") return "You received a new swap request.";
+  if (notification.kind === "swap_accepted") return "Your swap request was accepted.";
+  if (notification.kind === "swap_declined") return "Your swap request was declined.";
+
+  const heading = notification.kind === "schedule_proposed"
+    ? "A swap time was proposed"
+    : "A swap time was confirmed";
+  const start = notification.startAt?.toDate();
+  const durationMinutes = notification.durationMinutes;
+  if (!start || typeof durationMinutes !== "number" || durationMinutes <= 0) return heading;
+
+  const end = new Date(start.getTime() + durationMinutes * 60_000);
+  const timeZone = notification.scheduleTimeZone;
+  const timeOptions = { ...(timeZone ? { timeZone } : {}), hour: "numeric", minute: "2-digit" } as const;
+  const dateOptions = { ...(timeZone ? { timeZone } : {}), dateStyle: "medium" } as const;
+  const dateKeyOptions = {
+    ...(timeZone ? { timeZone } : {}),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  } as const;
+  const startDate = new Intl.DateTimeFormat(undefined, dateOptions).format(start);
+  const startLabel = new Intl.DateTimeFormat(undefined, timeOptions).format(start);
+  const endLabel = new Intl.DateTimeFormat(undefined, timeOptions).format(end);
+  const sameDate = new Intl.DateTimeFormat("en", dateKeyOptions).format(start)
+    === new Intl.DateTimeFormat("en", dateKeyOptions).format(end);
+  const endDate = sameDate ? "" : `${new Intl.DateTimeFormat(undefined, dateOptions).format(end)} `;
+  const mode = notification.scheduleMode === "onsite" ? "Onsite" : "Online";
+  const meetingDetails = notification.scheduleMode === "onsite"
+    ? notification.scheduleVenue
+    : notification.schedulePlatform;
+
+  return `${heading}: ${mode}, ${startDate} ${startLabel}–${endDate}${endLabel} (${durationMinutes} min)${meetingDetails ? ` · ${meetingDetails}` : ""}`;
 }
 
 export default function SprintTwoWorkspace() {
@@ -860,7 +939,7 @@ export default function SprintTwoWorkspace() {
             </button>
             {notificationsOpen && <section className="notification-popover" aria-label="Notifications">
               <div className="notification-popover-heading"><strong>Notifications</strong>{unreadNotificationCount > 0 && <button className="text-action" type="button" onClick={() => void markAllNotificationsRead()}>Mark all read</button>}</div>
-              {notificationError ? <p className="notification-empty" role="alert">{notificationError}</p> : notifications.length ? <><ul className="notification-list">{visibleNotifications.map((notification) => <li key={notification.id}><button className={`notification-item${notification.read ? "" : " unread"}`} type="button" onClick={() => void openNotification(notification)}><span className="notification-dot" aria-hidden="true" /><span>{notification.kind === "category_request" ? "A member requested a new skill category." : notification.kind === "swap_request" ? "You received a new swap request." : notification.kind === "swap_accepted" ? "Your swap request was accepted." : "Your swap request was declined."}</span></button></li>)}</ul><DashboardPagination page={currentNotificationPage} pageSize={NOTIFICATION_PAGE_SIZE} total={notifications.length} onPageChange={setNotificationPage} /></> : <p className="notification-empty">You’re all caught up.</p>}
+              {notificationError ? <p className="notification-empty" role="alert">{notificationError}</p> : notifications.length ? <><ul className="notification-list">{visibleNotifications.map((notification) => <li key={notification.id}><button className={`notification-item${notification.read ? "" : " unread"}`} type="button" onClick={() => void openNotification(notification)}><span className="notification-dot" aria-hidden="true" /><span>{notificationMessage(notification)}</span></button></li>)}</ul><DashboardPagination page={currentNotificationPage} pageSize={NOTIFICATION_PAGE_SIZE} total={notifications.length} onPageChange={setNotificationPage} /></> : <p className="notification-empty">You’re all caught up.</p>}
             </section>}
           </div>
           <button className="theme-toggle" type="button" onClick={onToggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}><span aria-hidden="true">{theme === "light" ? "◐" : "☀"}</span></button>
@@ -905,7 +984,7 @@ export default function SprintTwoWorkspace() {
                     <span className={`request-status ${request.status}`}>{request.status}</span>
                   </div>
                   <p className="request-participant">From a <Link href={`/profile/${request.fromUserId}`}>community member</Link></p>
-                  {request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}
+                  <RequestExchangeDetails request={request} listings={listings} direction="received" />
                   {(request.status === "accepted" || request.status === "completed") && <p className="request-schedule-details">{requestScheduleSummary(request)}</p>}
                   {request.message && <p className="request-message">{request.message}</p>}
                   {(request.status === "accepted" || request.status === "completed") && <ExchangeWorkspace requestId={request.id} currentUserId={user.uid} otherUserId={request.fromUserId} requestStatus={request.status} />}
@@ -933,7 +1012,7 @@ export default function SprintTwoWorkspace() {
                   <span className={`request-status ${request.status}`}>{request.status}</span>
                 </div>
                 <p className="request-participant">To a <Link href={`/profile/${request.toUserId}`}>community member</Link></p>
-                {request.offeredSkillId && <p className="request-existing-status">Offered in return: {listings.find((listing) => listing.id === request.offeredSkillId)?.title ?? "Skill listing"}</p>}
+                <RequestExchangeDetails request={request} listings={listings} direction="sent" />
                 {(request.status === "accepted" || request.status === "completed") && <p className="request-schedule-details">{requestScheduleSummary(request)}</p>}
                 {request.message && <p className="request-message">{request.message}</p>}
                 {(request.status === "accepted" || request.status === "completed") && <ExchangeWorkspace requestId={request.id} currentUserId={user.uid} otherUserId={request.toUserId} requestStatus={request.status} />}

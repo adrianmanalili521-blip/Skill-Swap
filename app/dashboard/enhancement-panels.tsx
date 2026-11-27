@@ -16,6 +16,7 @@ import {
   Timestamp,
   updateDoc,
   where,
+  writeBatch,
 } from "firebase/firestore";
 import { deleteObject, ref, uploadBytes } from "firebase/storage";
 import { useAuth } from "@/lib/auth-context";
@@ -75,10 +76,8 @@ function isFutureDate(value: Date) {
   return value.getTime() > Date.now();
 }
 
-function localDateTimeInput(value: Date) {
-  const date = `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
-  const time = `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
-  return `${date}T${time}`;
+function localDateInput(value: Date) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 }
 
 function scheduleOptionLabel(value: Timestamp, timeZone?: string) {
@@ -103,6 +102,7 @@ export function ExchangeWorkspace({
   const [record, setRecord] = useState<ExchangeRecord | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
+  const [selectedScheduleDate, setSelectedScheduleDate] = useState("");
   const [selectedScheduleTime, setSelectedScheduleTime] = useState("");
   const [scheduleMode, setScheduleMode] = useState<"online" | "onsite">("online");
   const [schedulePlatform, setSchedulePlatform] = useState("");
@@ -175,8 +175,12 @@ export function ExchangeWorkspace({
   async function submitScheduleProposal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
-    const date = new Date(selectedScheduleTime);
-    if (!selectedScheduleTime || Number.isNaN(date.getTime())) {
+    if (!selectedScheduleDate || !selectedScheduleTime) {
+      setError("Choose both a date and a start time.");
+      return;
+    }
+    const date = new Date(`${selectedScheduleDate}T${selectedScheduleTime}`);
+    if (Number.isNaN(date.getTime())) {
       setError("Choose a valid date and time.");
       return;
     }
@@ -196,12 +200,15 @@ export function ExchangeWorkspace({
     setError(null);
     setNotice(null);
     try {
-      await updateDoc(doc(db, "swapRequests", requestId), {
+      const durationMinutes = record?.durationMinutes ?? DEFAULT_SKILL_DURATION_MINUTES * 2;
+      const startAt = Timestamp.fromDate(date);
+      const batch = writeBatch(db);
+      batch.update(doc(db, "swapRequests", requestId), {
         scheduleStatus: "proposed",
         scheduleProposerId: currentUserId,
-        scheduleOptions: [Timestamp.fromDate(date)],
+        scheduleOptions: [startAt],
         scheduleSelectedIndex: null,
-        scheduleDurationMinutes: record?.durationMinutes ?? DEFAULT_SKILL_DURATION_MINUTES * 2,
+        scheduleDurationMinutes: durationMinutes,
         scheduleMode,
         scheduleTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         schedulePlatform: scheduleMode === "online" ? schedulePlatform.trim() : "",
@@ -210,6 +217,21 @@ export function ExchangeWorkspace({
         scheduledAt: null,
         updatedAt: serverTimestamp(),
       });
+      batch.set(doc(collection(db, "notifications")), {
+        recipientId: otherUserId,
+        actorId: currentUserId,
+        requestId,
+        kind: "schedule_proposed",
+        read: false,
+        createdAt: serverTimestamp(),
+        startAt,
+        durationMinutes,
+        scheduleMode,
+        scheduleTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        schedulePlatform: scheduleMode === "online" ? schedulePlatform.trim() : "",
+        scheduleVenue: scheduleMode === "onsite" ? scheduleVenue.trim() : "",
+      });
+      await batch.commit();
       setSelectedScheduleTime("");
       setSchedulePlatform("");
       setScheduleVenue("");
@@ -242,12 +264,31 @@ export function ExchangeWorkspace({
     setError(null);
     setNotice(null);
     try {
-      await updateDoc(doc(db, "swapRequests", requestId), {
+      const durationMinutes = record.scheduleDurationMinutes
+        ?? record.durationMinutes
+        ?? DEFAULT_SKILL_DURATION_MINUTES * 2;
+      const batch = writeBatch(db);
+      batch.update(doc(db, "swapRequests", requestId), {
         scheduleStatus: "confirmed",
         scheduleSelectedIndex: selectedIndex,
         scheduledAt: selectedTime,
         updatedAt: serverTimestamp(),
       });
+      batch.set(doc(collection(db, "notifications")), {
+        recipientId: otherUserId,
+        actorId: currentUserId,
+        requestId,
+        kind: "schedule_confirmed",
+        read: false,
+        createdAt: serverTimestamp(),
+        startAt: selectedTime,
+        durationMinutes,
+        scheduleMode: record.scheduleMode ?? "online",
+        scheduleTimeZone: record.scheduleTimeZone ?? "UTC",
+        schedulePlatform: record.schedulePlatform ?? "",
+        scheduleVenue: record.scheduleVenue ?? "",
+      });
+      await batch.commit();
       setNotice("The exchange time is confirmed.");
     } catch (confirmationError) {
       setError(getAuthErrorMessage(confirmationError));
@@ -347,15 +388,16 @@ export function ExchangeWorkspace({
         {requestStatus === "accepted" && (showProposalForm
           ? <form className="exchange-schedule-form" onSubmit={(event) => void submitScheduleProposal(event)}>
             <h4>Propose a time</h4>
-            <p className="exchange-chat-empty">Choose a future date and time. Your partner can confirm it or discuss a different time in chat.</p>
-            <label className="dashboard-field"><span>Date and time</span><input type="datetime-local" value={selectedScheduleTime} min={localDateTimeInput(new Date())} step={900} onChange={(event) => setSelectedScheduleTime(event.target.value)} required /></label>
+            <p className="exchange-chat-empty">Choose a date, then choose a start time. Times use your local time zone; only this one time is shared.</p>
+            <label className="dashboard-field"><span>Date</span><input type="date" value={selectedScheduleDate} min={localDateInput(new Date())} onChange={(event) => { setSelectedScheduleDate(event.target.value); setSelectedScheduleTime(""); }} required /></label>
+            <label className="dashboard-field"><span>Start time</span><input type="time" value={selectedScheduleTime} step={900} onChange={(event) => setSelectedScheduleTime(event.target.value)} required /></label>
             <label className="dashboard-field"><span>Meeting format</span><select value={scheduleMode} onChange={(event) => setScheduleMode(event.target.value as typeof scheduleMode)}><option value="online">Online</option><option value="onsite">Onsite</option></select></label>
             {scheduleMode === "online"
               ? <><label className="dashboard-field"><span>Online platform</span><input value={schedulePlatform} onChange={(event) => setSchedulePlatform(event.target.value)} maxLength={80} placeholder="e.g. Google Meet, Zoom, Discord" required /></label><label className="dashboard-field"><span>Meeting link or instructions <small>Optional</small></span><input value={scheduleNote} onChange={(event) => setScheduleNote(event.target.value)} maxLength={240} placeholder="Add a link or joining details" /></label></>
               : <label className="dashboard-field"><span>Venue or meeting place <small>Choose a public place</small></span><input value={scheduleVenue} onChange={(event) => setScheduleVenue(event.target.value)} maxLength={240} placeholder="e.g. library, campus, or public cafe" required /></label>}
-            <div className="exchange-schedule-actions"><button className="secondary-action" type="button" onClick={() => setShowProposalForm(false)}>Cancel</button><button className="primary-action" type="submit" disabled={busy || !selectedScheduleTime}>{busy ? "Sending..." : "Propose this time"}</button></div>
+            <div className="exchange-schedule-actions"><button className="secondary-action" type="button" onClick={() => setShowProposalForm(false)}>Cancel</button><button className="primary-action" type="submit" disabled={busy || !selectedScheduleDate || !selectedScheduleTime}>{busy ? "Sending..." : "Propose this time"}</button></div>
           </form>
-          : <button className="secondary-action" type="button" onClick={() => { setSelectedScheduleTime(""); setShowProposalForm(true); }}>{record?.scheduleStatus ? "Suggest a new time" : "Propose a time"}</button>)}
+          : <button className="secondary-action" type="button" onClick={() => { setSelectedScheduleDate(""); setSelectedScheduleTime(""); setShowProposalForm(true); }}>{record?.scheduleStatus ? "Suggest a new time" : "Propose a time"}</button>)}
       </section>
       <section className="exchange-tool-card" aria-label="Private exchange chat">
         <h4>Exchange chat</h4>

@@ -580,7 +580,9 @@ service cloud.firestore {
                       'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
                     ])
                     && request.resource.data.keys().hasOnly([
-                      'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                      'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt',
+                      'startAt', 'durationMinutes', 'scheduleMode', 'scheduleTimeZone',
+                      'schedulePlatform', 'scheduleVenue'
                     ])
                     && request.resource.data.actorId == request.auth.uid
                     && request.resource.data.recipientId is string
@@ -590,6 +592,9 @@ service cloud.firestore {
                     && (
                       (
                         request.resource.data.kind == 'swap_request'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                        ])
                         && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
                           == request.auth.uid
@@ -600,6 +605,9 @@ service cloud.firestore {
                       )
                       || (
                         request.resource.data.kind == 'swap_accepted'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                        ])
                         && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
                           == request.auth.uid
@@ -610,6 +618,9 @@ service cloud.firestore {
                       )
                       || (
                         request.resource.data.kind == 'swap_declined'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                        ])
                         && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
                           == request.auth.uid
@@ -620,6 +631,9 @@ service cloud.firestore {
                       )
                       || (
                         request.resource.data.kind == 'category_request'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                        ])
                         && existsAfter(/databases/$(database)/documents/categoryRequests/$(request.resource.data.requestId))
                         && getAfter(/databases/$(database)/documents/categoryRequests/$(request.resource.data.requestId)).data.requesterId
                           == request.auth.uid
@@ -630,6 +644,115 @@ service cloud.firestore {
                           == 'admin'
                         && get(/databases/$(database)/documents/users/$(request.resource.data.recipientId)).data.get('status', 'active')
                           == 'active'
+                      )
+                      || (
+                        request.resource.data.kind == 'schedule_proposed'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt',
+                          'startAt', 'durationMinutes', 'scheduleMode', 'scheduleTimeZone',
+                          'schedulePlatform', 'scheduleVenue'
+                        ])
+                        && request.resource.data.startAt is timestamp
+                        && request.resource.data.durationMinutes is int
+                        && request.resource.data.durationMinutes > 0
+                        && request.resource.data.durationMinutes <= 960
+                        && request.resource.data.scheduleMode in ['online', 'onsite']
+                        && request.resource.data.scheduleTimeZone is string
+                        && request.resource.data.scheduleTimeZone.size() > 0
+                        && request.resource.data.scheduleTimeZone.size() <= 80
+                        && request.resource.data.schedulePlatform is string
+                        && request.resource.data.schedulePlatform.size() <= 80
+                        && request.resource.data.scheduleVenue is string
+                        && request.resource.data.scheduleVenue.size() <= 240
+                        && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.status
+                          == 'accepted'
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleStatus
+                          == 'proposed'
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleProposerId
+                          == request.auth.uid
+                        && (
+                          (
+                            getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
+                              == request.auth.uid
+                            && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
+                              == request.resource.data.recipientId
+                          )
+                          || (
+                            getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
+                              == request.auth.uid
+                            && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
+                              == request.resource.data.recipientId
+                          )
+                        )
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleOptions[0]
+                          == request.resource.data.startAt
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleDurationMinutes
+                          == request.resource.data.durationMinutes
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleMode
+                          == request.resource.data.scheduleMode
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleTimeZone
+                          == request.resource.data.scheduleTimeZone
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.schedulePlatform
+                          == request.resource.data.schedulePlatform
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleVenue
+                          == request.resource.data.scheduleVenue
+                      )
+                      || (
+                        request.resource.data.kind == 'schedule_confirmed'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt',
+                          'startAt', 'durationMinutes', 'scheduleMode', 'scheduleTimeZone',
+                          'schedulePlatform', 'scheduleVenue'
+                        ])
+                        && request.resource.data.startAt is timestamp
+                        && request.resource.data.durationMinutes is int
+                        && request.resource.data.durationMinutes > 0
+                        && request.resource.data.durationMinutes <= 960
+                        && request.resource.data.scheduleMode in ['online', 'onsite']
+                        && request.resource.data.scheduleTimeZone is string
+                        && request.resource.data.scheduleTimeZone.size() > 0
+                        && request.resource.data.scheduleTimeZone.size() <= 80
+                        && request.resource.data.schedulePlatform is string
+                        && request.resource.data.schedulePlatform.size() <= 80
+                        && request.resource.data.scheduleVenue is string
+                        && request.resource.data.scheduleVenue.size() <= 240
+                        && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.status
+                          == 'accepted'
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleStatus
+                          == 'confirmed'
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleProposerId
+                          in [request.resource.data.actorId, request.resource.data.recipientId]
+                        && (
+                          (
+                            getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
+                              == request.resource.data.actorId
+                            && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
+                              == request.resource.data.recipientId
+                          )
+                          || (
+                            getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
+                              == request.resource.data.actorId
+                            && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
+                              == request.resource.data.recipientId
+                          )
+                        )
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduledAt
+                          == request.resource.data.startAt
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get(
+                          'scheduleDurationMinutes',
+                          getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get('durationMinutes', 120)
+                        )
+                          == request.resource.data.durationMinutes
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get('scheduleMode', 'online')
+                          == request.resource.data.scheduleMode
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get('scheduleTimeZone', 'UTC')
+                          == request.resource.data.scheduleTimeZone
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get('schedulePlatform', '')
+                          == request.resource.data.schedulePlatform
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get('scheduleVenue', '')
+                          == request.resource.data.scheduleVenue
                       )
                     );
 
