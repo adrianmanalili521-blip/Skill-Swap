@@ -10,6 +10,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -29,6 +30,7 @@ import { auth, db } from "./firebase";
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
+  authError: unknown | null;
   signUp: (email: string, password: string, displayName: string) => Promise<User>;
   signIn: (email: string, password: string) => Promise<User>;
   signInWithGoogle: () => Promise<User>;
@@ -70,35 +72,88 @@ async function ensureUserDoc(user: User) {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState<unknown | null>(null);
+  const authActionInProgress = useRef(false);
+  const authStateRevision = useRef(0);
+  const resolvedAuthUid = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
+    let active = true;
+
+    async function syncAuthState(firebaseUser: User | null) {
+      const revision = ++authStateRevision.current;
+      setLoading(true);
+      setAuthError(null);
+
+      try {
+        if (firebaseUser) await ensureUserDoc(firebaseUser);
+        if (!active || revision !== authStateRevision.current || authActionInProgress.current) return;
+
+        resolvedAuthUid.current = firebaseUser?.uid ?? null;
+        setUser(firebaseUser);
+      } catch (error) {
+        if (!active || revision !== authStateRevision.current || authActionInProgress.current) return;
+
+        setUser(null);
+        setAuthError(error);
+      } finally {
+        if (active && revision === authStateRevision.current && !authActionInProgress.current) {
+          setLoading(false);
+        }
+      }
+    }
+
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
-      setLoading(false);
+      if (authActionInProgress.current) return;
+      if (resolvedAuthUid.current === (firebaseUser?.uid ?? null)) return;
+      void syncAuthState(firebaseUser);
     });
-    return unsubscribe;
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
-  async function signUp(email: string, password: string, displayName: string) {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    if (displayName) {
-      await updateProfile(cred.user, { displayName });
+  async function completeAuthentication(operation: () => Promise<User>) {
+    const revision = ++authStateRevision.current;
+    authActionInProgress.current = true;
+    setLoading(true);
+    setAuthError(null);
+
+    try {
+      const authenticatedUser = await operation();
+      await ensureUserDoc(authenticatedUser);
+      resolvedAuthUid.current = authenticatedUser.uid;
+      setUser(authenticatedUser);
+      return authenticatedUser;
+    } finally {
+      authActionInProgress.current = false;
+      if (revision === authStateRevision.current) setLoading(false);
     }
-    await ensureUserDoc(cred.user);
-    return cred.user;
+  }
+
+  async function signUp(email: string, password: string, displayName: string) {
+    return completeAuthentication(async () => {
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      if (displayName) await updateProfile(cred.user, { displayName });
+      return cred.user;
+    });
   }
 
   async function signIn(email: string, password: string) {
-    const cred = await signInWithEmailAndPassword(auth, email, password);
-    await ensureUserDoc(cred.user);
-    return cred.user;
+    return completeAuthentication(async () => {
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      return cred.user;
+    });
   }
 
   async function signInWithGoogle() {
-    const provider = new GoogleAuthProvider();
-    const cred = await signInWithPopup(auth, provider);
-    await ensureUserDoc(cred.user);
-    return cred.user;
+    return completeAuthentication(async () => {
+      const provider = new GoogleAuthProvider();
+      const cred = await signInWithPopup(auth, provider);
+      return cred.user;
+    });
   }
 
   async function signOut() {
@@ -108,6 +163,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthContextValue = {
     user,
     loading,
+    authError,
     signUp,
     signIn,
     signInWithGoogle,
