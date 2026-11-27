@@ -152,6 +152,11 @@ function listingDuration(listing?: SkillListing) {
     : DEFAULT_SKILL_DURATION_MINUTES;
 }
 
+function listingAvailabilityStatus(listing: SkillListing, ongoingListingIds: Set<string>) {
+  if (ongoingListingIds.has(listing.id)) return "Ongoing swap";
+  return listing.status === "active" ? "Active" : "Inactive";
+}
+
 function createdTime(listing: SkillListing) {
   return listing.createdAt?.toMillis?.() ?? 0;
 }
@@ -569,6 +574,17 @@ export default function SprintTwoWorkspace() {
     };
   }, [user, userRole]);
 
+  const requestSnapshotIsCurrent = requestSnapshot.userId === user?.uid;
+  const incomingRequests = requestSnapshotIsCurrent ? requestSnapshot.incoming : [];
+  const outgoingRequests = requestSnapshotIsCurrent ? requestSnapshot.outgoing : [];
+  const ongoingListingIds = new Set(
+    [...incomingRequests, ...outgoingRequests]
+      .filter((request) => request.status === "accepted")
+      .flatMap((request) => [
+        request.skillId,
+        ...(request.offeredSkillId ? [request.offeredSkillId] : []),
+      ]),
+  );
   const myListings = listings.filter((listing) => listing.ownerId === user?.uid && listing.status !== "removed");
   const categories = useMemo(
     () => {
@@ -616,9 +632,6 @@ export default function SprintTwoWorkspace() {
     currentListingPage * DISCOVERY_PAGE_SIZE,
     (currentListingPage + 1) * DISCOVERY_PAGE_SIZE,
   );
-  const requestSnapshotIsCurrent = requestSnapshot.userId === user?.uid;
-  const incomingRequests = requestSnapshotIsCurrent ? requestSnapshot.incoming : [];
-  const outgoingRequests = requestSnapshotIsCurrent ? requestSnapshot.outgoing : [];
   const sortedIncomingRequests = [...incomingRequests].sort((first, second) =>
     (incomingRequestSort === "newest" ? -1 : 1) * (requestCreatedTime(first) - requestCreatedTime(second)));
   const sortedOutgoingRequests = [...outgoingRequests].sort((first, second) =>
@@ -963,14 +976,50 @@ export default function SprintTwoWorkspace() {
           {!isAdmin && <div className="category-request-entry"><button className="text-action" type="button" onClick={() => setShowCategoryRequestForm((shown) => !shown)}>{showCategoryRequestForm ? "Close category request" : "Request a category"}</button></div>}
           {!isAdmin && showCategoryRequestForm && <form className="skill-editor category-request-form" onSubmit={(event) => void sendCategoryRequest(event)}><h2>Suggest a category</h2><label className="dashboard-field"><span>Category name</span><input value={categoryRequestName} onChange={(event) => setCategoryRequestName(event.target.value)} minLength={2} maxLength={40} required placeholder="e.g. Gardening" /></label><label className="dashboard-field"><span>Why should we add it? <small>Optional</small></span><textarea value={categoryRequestReason} onChange={(event) => setCategoryRequestReason(event.target.value)} maxLength={500} rows={3} placeholder="Tell the admin what skills this category would cover." /></label><div className="editor-actions"><button className="primary-action" type="submit" disabled={sendingCategoryRequest}>{sendingCategoryRequest ? "Sending..." : "Send category request"}</button></div></form>}
           <div className="results-heading"><h2>Community skills</h2><span>{loadingData ? "Loading..." : `${discoveredListings.length} ${discoveredListings.length === 1 ? "listing" : "listings"}`}</span></div>
-          {loadingData ? <div className="empty-state">Loading skills...</div> : discoveredListings.length ? <><div className="skill-grid">{visibleDiscoveredListings.map((listing, index) => {
-            const previousRequest = !isAdmin && outgoingRequests.find((request) => request.skillId === listing.id && (request.status === "pending" || request.status === "accepted"));
-            const requestFormOpen = requestFormFor === listing.id;
-            return <article className="skill-card" key={listing.id} style={{ animationDelay: `${Math.min(index * 45, 270)}ms` }}><div className="skill-card-topline"><span className="skill-category">{listing.category}</span><span className="skill-level">{listing.level}</span></div><h3>{listing.title}</h3><p className="skill-description">{listing.description || "This member is happy to share what they know."}</p><p className="skill-listing-meta">{listingDuration(listing)} minutes · {formatSkillPrice(listing.price)}</p>{listing.tags.length > 0 && <div className="skill-tags">{listing.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}<div className="skill-card-footer"><Link href={`/profile/${listing.ownerId}`} className="listing-owner"><span className="mini-avatar">{listing.ownerName.slice(0, 1).toUpperCase()}</span><span>{listing.ownerName}</span></Link><span className="listing-status">Open to swap · {listing.requestCount ?? 0} requests</span></div>
-              {!isAdmin && listing.ownerId !== user?.uid && <Link className="admin-text-button listing-report-link" href={`/report/listing/${encodeURIComponent(listing.id)}`}>Report listing</Link>}
-              {!isAdmin && (previousRequest ? <p className="request-existing-status">Request {previousRequest.status}</p> : requestFormOpen ? <form className="swap-request-form" onSubmit={(event) => void sendSwapRequest(listing, event)}><label className="dashboard-field"><span>Message <small>Optional</small></span><textarea value={requestMessage} onChange={(event) => setRequestMessage(event.target.value)} maxLength={500} rows={3} placeholder="What would you like to learn?" /></label><div className="editor-actions"><button className="secondary-action" type="button" onClick={() => { setRequestFormFor(null); setRequestMessage(""); }}>Cancel</button><button className="primary-action" type="submit" disabled={sendingRequestFor !== null}>{sendingRequestFor === listing.id ? "Sending..." : "Send request"}</button></div></form> : <button className="secondary-action request-start" type="button" disabled={loadingRequests} onClick={() => { setRequestFormFor(listing.id); setRequestMessage(""); }}>{loadingRequests ? "Loading requests..." : outgoingRequests.some((request) => request.skillId === listing.id && request.status === "declined") ? "Request again" : "Request a swap"}</button>)}
-            </article>;
-          })}</div><div className="discovery-pagination"><span>{currentDiscoveryPage * DISCOVERY_PAGE_SIZE + 1}–{Math.min((currentDiscoveryPage + 1) * DISCOVERY_PAGE_SIZE, discoveredListings.length)} of {discoveredListings.length}</span><div><button className="secondary-action" type="button" disabled={currentDiscoveryPage === 0} onClick={() => setDiscoveryPage(Math.max(0, currentDiscoveryPage - 1))}>Previous</button><button className="secondary-action" type="button" disabled={currentDiscoveryPage >= discoveryPageCount - 1} onClick={() => setDiscoveryPage(Math.min(discoveryPageCount - 1, currentDiscoveryPage + 1))}>Next</button></div></div></> : <div className="empty-state"><strong>No matching skills yet.</strong><span>{isAdmin ? "Try another search or category filter." : "Try another search, or be the first to share a skill."}</span></div>}
+          {loadingData ? <div className="empty-state">Loading skills...</div> : discoveredListings.length ? <>
+            <div className="skill-grid">{visibleDiscoveredListings.map((listing, index) => {
+              const previousRequest = !isAdmin && outgoingRequests.find((request) =>
+                request.skillId === listing.id && (request.status === "pending" || request.status === "accepted"));
+              const requestFormOpen = requestFormFor === listing.id;
+              const listingStatus = listingAvailabilityStatus(listing, ongoingListingIds);
+              return <article className="skill-card" key={listing.id} style={{ animationDelay: `${Math.min(index * 45, 270)}ms` }}>
+                <div className="skill-card-topline"><span className="skill-category">{listing.category}</span><span className="skill-level">{listing.level}</span></div>
+                <h3>{listing.title}</h3>
+                <p className="skill-description">{listing.description || "This member is happy to share what they know."}</p>
+                <p className="skill-listing-meta">{listingDuration(listing)} minutes · {formatSkillPrice(listing.price)}</p>
+                {listing.tags.length > 0 && <div className="skill-tags">{listing.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}
+                <div className="skill-card-footer">
+                  <Link href={`/profile/${listing.ownerId}`} className="listing-owner">
+                    <span className="mini-avatar">{listing.ownerName.slice(0, 1).toUpperCase()}</span><span>{listing.ownerName}</span>
+                  </Link>
+                  <span className={`listing-status${listingStatus === "Ongoing swap" ? " ongoing" : ""}`}>
+                    {listingStatus} · {listing.requestCount ?? 0} requests
+                  </span>
+                </div>
+                {!isAdmin && listing.ownerId !== user?.uid && <Link className="admin-text-button listing-report-link" href={`/report/listing/${encodeURIComponent(listing.id)}`}>Report listing</Link>}
+                {!isAdmin && (previousRequest
+                  ? <p className="request-existing-status">{previousRequest.status === "accepted" ? "Ongoing swap" : `Request ${previousRequest.status}`}</p>
+                  : requestFormOpen
+                    ? <form className="swap-request-form" onSubmit={(event) => void sendSwapRequest(listing, event)}>
+                      <label className="dashboard-field"><span>Message <small>Optional</small></span><textarea value={requestMessage} onChange={(event) => setRequestMessage(event.target.value)} maxLength={500} rows={3} placeholder="What would you like to learn?" /></label>
+                      <div className="editor-actions">
+                        <button className="secondary-action" type="button" onClick={() => { setRequestFormFor(null); setRequestMessage(""); }}>Cancel</button>
+                        <button className="primary-action" type="submit" disabled={sendingRequestFor !== null}>{sendingRequestFor === listing.id ? "Sending..." : "Send request"}</button>
+                      </div>
+                    </form>
+                    : <button className="secondary-action request-start" type="button" disabled={loadingRequests} onClick={() => { setRequestFormFor(listing.id); setRequestMessage(""); }}>
+                      {loadingRequests ? "Loading requests..." : outgoingRequests.some((request) => request.skillId === listing.id && request.status === "declined") ? "Request again" : "Request a swap"}
+                    </button>)}
+              </article>;
+            })}</div>
+            <div className="discovery-pagination">
+              <span>{currentDiscoveryPage * DISCOVERY_PAGE_SIZE + 1}–{Math.min((currentDiscoveryPage + 1) * DISCOVERY_PAGE_SIZE, discoveredListings.length)} of {discoveredListings.length}</span>
+              <div>
+                <button className="secondary-action" type="button" disabled={currentDiscoveryPage === 0} onClick={() => setDiscoveryPage(Math.max(0, currentDiscoveryPage - 1))}>Previous</button>
+                <button className="secondary-action" type="button" disabled={currentDiscoveryPage >= discoveryPageCount - 1} onClick={() => setDiscoveryPage(Math.min(discoveryPageCount - 1, currentDiscoveryPage + 1))}>Next</button>
+              </div>
+            </div>
+          </> : <div className="empty-state"><strong>No matching skills yet.</strong><span>{isAdmin ? "Try another search or category filter." : "Try another search, or be the first to share a skill."}</span></div>}
         </section>}
 
         {view === "requests" && <section className="swap-requests-view" aria-label="Swap requests">
@@ -1056,7 +1105,27 @@ export default function SprintTwoWorkspace() {
 
         {view === "listings" && !isAdmin && <section aria-label="Manage your skill listings"><div className="section-toolbar"><div><h2>Your listings</h2><p>{myListings.length} total · {myListings.filter((item) => item.status === "active").length} active</p></div><div className="admin-row-actions"><label className="category-filter"><span className="visually-hidden">Sort your listings</span><select value={listingSort} onChange={(event) => { setListingSort(event.target.value as typeof listingSort); setListingPage(0); }}><option value="newest">Latest first</option><option value="oldest">Oldest first</option></select></label>{!showEditor && <button className="primary-action" type="button" onClick={() => { setEditing(null); setShowEditor(true); }}>＋ New listing</button>}</div></div>
           {showEditor && <form className="skill-editor" onSubmit={saveListing}><div className="editor-heading"><div><p className="dashboard-eyebrow">{editing ? "EDIT LISTING" : "NEW LISTING"}</p><h2>{editing ? "Refine your offer" : "What can you teach?"}</h2></div><button className="icon-button" type="button" onClick={() => { setShowEditor(false); setEditing(null); }} aria-label="Close listing form">×</button></div><div className="editor-grid"><label className="dashboard-field"><span>Skill title</span><input name="title" defaultValue={editing?.title ?? ""} maxLength={70} placeholder="e.g. Beginner watercolor techniques" required /></label><label className="dashboard-field"><span>Category</span><select name="category" defaultValue={editing?.category ?? categories[0]}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label className="dashboard-field"><span>Experience level</span><select name="level" defaultValue={editing?.level ?? "beginner"}><option value="beginner">Beginner friendly</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></label><label className="dashboard-field"><span>Duration <small>Minutes per session</small></span><input name="durationMinutes" type="number" min={15} max={480} step={1} defaultValue={listingDuration(editing ?? undefined)} required /></label><label className="dashboard-field"><span>Price <small>Optional · PHP</small></span><input name="price" type="number" min={0} step="0.01" defaultValue={editing?.price ?? ""} placeholder="Leave blank if not set" /></label><label className="dashboard-field"><span>Tags <small>Separate with commas</small></span><input name="tags" defaultValue={editing?.tags.join(", ") ?? ""} placeholder="remote, materials included" /></label><label className="dashboard-field editor-description"><span>Description</span><textarea name="description" defaultValue={editing?.description ?? ""} maxLength={500} placeholder="What will someone learn? What should they bring?" rows={4} /></label></div><div className="editor-actions"><button className="secondary-action" type="button" onClick={() => { setShowEditor(false); setEditing(null); }}>Cancel</button><button className="primary-action" type="submit" disabled={saving}>{saving ? "Saving..." : editing ? "Save changes" : "Publish listing"}</button></div></form>}
-          {loadingData ? <div className="empty-state">Loading your listings...</div> : myListings.length ? <><div className="managed-listings">{visibleMyListings.map((listing) => <article className="managed-listing" key={listing.id}><div className="managed-listing-copy"><span className={`status-dot ${listing.status}`} /> <span className="managed-category">{listing.category} · {listing.status}</span><h3>{listing.title}</h3><p>{listing.description || "No description added."}</p><p className="skill-listing-meta">{listingDuration(listing)} minutes · {formatSkillPrice(listing.price)}</p></div><div className="managed-listing-actions"><button className="text-action" type="button" onClick={() => { setEditing(listing); setShowEditor(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Edit</button><button className="text-action" type="button" onClick={() => setListingStatus(listing, listing.status === "paused" ? "active" : "paused")}>{listing.status === "paused" ? "Resume" : "Pause"}</button><button className="text-action destructive-action" type="button" onClick={() => removeListing(listing)}>Delete</button></div></article>)}</div><DashboardPagination page={currentListingPage} pageSize={DISCOVERY_PAGE_SIZE} total={myListings.length} onPageChange={setListingPage} /></> : !showEditor ? <div className="empty-state"><strong>Your first listing starts here.</strong><span>Share a skill you enjoy teaching and help someone take their next step.</span><button className="primary-action" type="button" onClick={() => setShowEditor(true)}>＋ Create a listing</button></div> : null}
+          {loadingData ? <div className="empty-state">Loading your listings...</div> : myListings.length ? <>
+            <div className="managed-listings">{visibleMyListings.map((listing) => {
+              const availabilityStatus = listingAvailabilityStatus(listing, ongoingListingIds);
+              const statusClass = availabilityStatus === "Ongoing swap" ? "ongoing" : listing.status;
+              return <article className="managed-listing" key={listing.id}>
+                <div className="managed-listing-copy">
+                  <span className={`status-dot ${statusClass}`} />
+                  <span className="managed-category">{listing.category} · {availabilityStatus}</span>
+                  <h3>{listing.title}</h3>
+                  <p>{listing.description || "No description added."}</p>
+                  <p className="skill-listing-meta">{listingDuration(listing)} minutes · {formatSkillPrice(listing.price)}</p>
+                </div>
+                <div className="managed-listing-actions">
+                  <button className="text-action" type="button" onClick={() => { setEditing(listing); setShowEditor(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Edit</button>
+                  <button className="text-action" type="button" onClick={() => setListingStatus(listing, listing.status === "paused" ? "active" : "paused")}>{listing.status === "paused" ? "Resume" : "Pause"}</button>
+                  <button className="text-action destructive-action" type="button" onClick={() => removeListing(listing)}>Delete</button>
+                </div>
+              </article>;
+            })}</div>
+            <DashboardPagination page={currentListingPage} pageSize={DISCOVERY_PAGE_SIZE} total={myListings.length} onPageChange={setListingPage} />
+          </> : !showEditor ? <div className="empty-state"><strong>Your first listing starts here.</strong><span>Share a skill you enjoy teaching and help someone take their next step.</span><button className="primary-action" type="button" onClick={() => setShowEditor(true)}>＋ Create a listing</button></div> : null}
         </section>}
 
         {view === "profile" && <div className="profile-view-grid"><section className="profile-editor dashboard-card"><div className="dashboard-card-heading"><div><p className="dashboard-eyebrow">YOUR PROFILE</p><h2>A little about you</h2></div><span className="profile-avatar" aria-hidden="true">{displayName.slice(0, 1).toUpperCase()}</span></div>{loadingData ? <div className="profile-loading" role="status">Loading your profile...</div> : <form className="profile-form" onSubmit={saveProfile}><label className="dashboard-field"><span>Display name</span><input value={profile?.displayName ?? user.displayName ?? ""} readOnly /></label><label className="dashboard-field"><span>Bio</span><textarea value={bio} onChange={(event) => setBio(event.target.value)} maxLength={280} placeholder="What do you enjoy teaching or learning?" rows={4} /><small className="field-count">{bio.length}/280</small></label><label className="dashboard-field"><span>Skills you can teach <small>Separate with commas</small></span><input value={skillsText} onChange={(event) => setSkillsText(event.target.value)} placeholder="Guitar, Excel, Spanish" /></label><label className="dashboard-field"><span>Skills you want to learn <small>Separate with commas</small></span><input value={goalsText} onChange={(event) => setGoalsText(event.target.value)} placeholder="Pottery, public speaking" /></label><button className="primary-action profile-save" type="submit" disabled={saving || loadingData}>{saving ? "Saving..." : "Save profile"}</button></form>}</section><aside className="profile-summary"><div className="profile-summary-head"><span className="profile-avatar large" aria-hidden="true">{displayName.slice(0, 1).toUpperCase()}</span><h2>{displayName}</h2><p>{user.email}</p></div><div className="profile-summary-stats"><div><strong>{myListings.filter((item) => item.status === "active").length}</strong><span>Active listings</span></div><div><strong>{profile?.ratingCount ? profile.rating?.toFixed(1) ?? "0.0" : "New"}</strong><span>Community rating</span></div></div><div className="profile-summary-section"><p className="dashboard-eyebrow">SKILLS I OFFER</p><div className="profile-chips">{parseList(skillsText).length ? parseList(skillsText).map((skill) => <span key={skill}>{skill}</span>) : <p>Add a few skills to introduce yourself.</p>}</div></div><div className="profile-summary-section"><p className="dashboard-eyebrow">LOOKING TO LEARN</p><div className="profile-chips learning-chips">{parseList(goalsText).length ? parseList(goalsText).map((goal) => <span key={goal}>{goal}</span>) : <p>What would you like to learn next?</p>}</div></div></aside></div>}

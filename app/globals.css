@@ -1043,6 +1043,7 @@ button:disabled {
 .listing-owner:hover,.back-link:hover { text-decoration: underline; }
 .mini-avatar { display: grid; width: 24px; height: 24px; flex: 0 0 24px; place-items: center; border-radius: 50%; background: #d8e7dc; color: #315b42; font-family: Georgia, "Times New Roman", serif; font-size: 12px; }
 .listing-status { color: #668169; font-size: 9px; white-space: nowrap; }
+.listing-status.ongoing { color: #a56d2c; }
 .skill-listing-meta { margin: 8px 0 0; color: var(--text-muted); font-size: 10px; }
 .empty-state { display: flex; min-height: 150px; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 22px; border: 1px dashed var(--border); border-radius: 4px; color: var(--text-muted); font-size: 12px; text-align: center; }
 .empty-state strong { color: var(--text); font-family: Georgia, "Times New Roman", serif; font-size: 20px; font-weight: 400; }
@@ -1065,6 +1066,7 @@ button:disabled {
 .managed-category { display: inline-flex; align-items: center; gap: 7px; }
 .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #719c77; }
 .status-dot.paused { background: #d3a166; }
+.status-dot.ongoing { background: #a56d2c; }
 .managed-listing h3 { margin: 8px 0 5px; font-size: 20px; }
 .managed-listing p { max-width: 620px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .managed-listing-actions { display: flex; flex: 0 0 auto; gap: 12px; }
