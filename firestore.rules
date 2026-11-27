@@ -34,34 +34,6 @@ service cloud.firestore {
       return value is int && value >= 15 && value <= 480;
     }
 
-    function validAvailabilityWindow(value, day) {
-      return !(day in value) || (
-        value[day] is map
-        && value[day].keys().hasOnly(['startMinute', 'endMinute'])
-        && value[day].keys().hasAll(['startMinute', 'endMinute'])
-        && value[day].startMinute is int
-        && value[day].startMinute >= 0
-        && value[day].startMinute < 1440
-        && value[day].startMinute % 15 == 0
-        && value[day].endMinute is int
-        && value[day].endMinute > value[day].startMinute
-        && value[day].endMinute < 1440
-        && value[day].endMinute % 15 == 0
-      );
-    }
-
-    function validWeeklyAvailability(value) {
-      return value is map
-        && value.keys().hasOnly(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'])
-        && validAvailabilityWindow(value, 'sun')
-        && validAvailabilityWindow(value, 'mon')
-        && validAvailabilityWindow(value, 'tue')
-        && validAvailabilityWindow(value, 'wed')
-        && validAvailabilityWindow(value, 'thu')
-        && validAvailabilityWindow(value, 'fri')
-        && validAvailabilityWindow(value, 'sat');
-    }
-
     // ---------- users/{userId} ----------
     // Profile info is readable by active signed-in users (needed for
     // browsing skills/listings and seeing who posted them).
@@ -155,25 +127,6 @@ service cloud.firestore {
                         )
                       );
       allow delete: if isAdmin();
-    }
-
-    match /users/{userId}/privateAvailability/{availabilityId} {
-      allow read: if availabilityId == 'weekly' && isActiveUser() && isOwner(userId);
-      allow create, update: if availabilityId == 'weekly'
-                            && isActiveUser()
-                            && isOwner(userId)
-                            && request.resource.data.keys().hasOnly([
-                              'weeklyAvailability', 'timeZone', 'updatedAt'
-                            ])
-                            && request.resource.data.keys().hasAll([
-                              'weeklyAvailability', 'timeZone', 'updatedAt'
-                            ])
-                            && validWeeklyAvailability(request.resource.data.weeklyAvailability)
-                            && request.resource.data.timeZone is string
-                            && request.resource.data.timeZone.size() > 0
-                            && request.resource.data.timeZone.size() <= 80
-                            && request.resource.data.updatedAt is timestamp;
-      allow delete: if availabilityId == 'weekly' && isActiveUser() && isOwner(userId);
     }
 
     // ---------- skills/{skillId} ----------
@@ -509,43 +462,10 @@ service cloud.firestore {
                         !('scheduleDurationMinutes' in resource.data)
                         || request.resource.data.scheduleDurationMinutes == resource.data.scheduleDurationMinutes
                       )
-                      && validWeeklyAvailability(resource.data.fromWeeklyAvailability)
-                      && validWeeklyAvailability(resource.data.toWeeklyAvailability)
-                      && resource.data.fromAvailabilityTimeZone is string
-                      && resource.data.toAvailabilityTimeZone is string
                       && request.resource.data.scheduleOptions is list
-                      && request.resource.data.scheduleOptions.size() >= 1
-                      && request.resource.data.scheduleOptions.size() <= 5
+                      && request.resource.data.scheduleOptions.size() == 1
                       && request.resource.data.scheduleOptions[0] is timestamp
                       && request.resource.data.scheduleOptions[0] > request.time
-                      && (
-                        request.resource.data.scheduleOptions.size() < 2
-                        || (
-                          request.resource.data.scheduleOptions[1] is timestamp
-                          && request.resource.data.scheduleOptions[1] > request.time
-                        )
-                      )
-                      && (
-                        request.resource.data.scheduleOptions.size() < 3
-                        || (
-                          request.resource.data.scheduleOptions[2] is timestamp
-                          && request.resource.data.scheduleOptions[2] > request.time
-                        )
-                      )
-                      && (
-                        request.resource.data.scheduleOptions.size() < 4
-                        || (
-                          request.resource.data.scheduleOptions[3] is timestamp
-                          && request.resource.data.scheduleOptions[3] > request.time
-                        )
-                      )
-                      && (
-                        request.resource.data.scheduleOptions.size() < 5
-                        || (
-                          request.resource.data.scheduleOptions[4] is timestamp
-                          && request.resource.data.scheduleOptions[4] > request.time
-                        )
-                      )
                       && request.resource.data.scheduleSelectedIndex == null
                       && request.resource.data.scheduleMode in ['online', 'onsite']
                       && request.resource.data.scheduleTimeZone is string
@@ -577,35 +497,21 @@ service cloud.firestore {
                       && isActiveUser()
                       && !isAdmin()
                       && resource.data.status == 'accepted'
+                      && resource.data.scheduleStatus == 'proposed'
+                      && request.auth.uid != resource.data.scheduleProposerId
                       && request.resource.data.status == resource.data.status
                       && request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['fromWeeklyAvailability', 'fromAvailabilityTimeZone', 'fromAvailabilityUpdatedAt', 'updatedAt'])
-                      && request.resource.data.diff(resource.data).affectedKeys()
-                        .hasAny(['fromWeeklyAvailability', 'fromAvailabilityTimeZone', 'fromAvailabilityUpdatedAt'])
-                      && request.auth.uid == resource.data.fromUserId
-                      && validWeeklyAvailability(request.resource.data.fromWeeklyAvailability)
-                      && request.resource.data.fromAvailabilityTimeZone is string
-                      && request.resource.data.fromAvailabilityTimeZone.size() > 0
-                      && request.resource.data.fromAvailabilityTimeZone.size() <= 80
-                      && request.resource.data.fromAvailabilityUpdatedAt == request.time
-                      && request.resource.data.updatedAt == request.time
-                    ) || (
-                      isParticipant(resource.data)
-                      && isActiveUser()
-                      && !isAdmin()
-                      && resource.data.status == 'accepted'
-                      && request.resource.data.status == resource.data.status
-                      && request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['toWeeklyAvailability', 'toAvailabilityTimeZone', 'toAvailabilityUpdatedAt', 'updatedAt'])
-                      && request.resource.data.diff(resource.data).affectedKeys()
-                        .hasAny(['toWeeklyAvailability', 'toAvailabilityTimeZone', 'toAvailabilityUpdatedAt'])
-                      && request.auth.uid == resource.data.toUserId
-                      && validWeeklyAvailability(request.resource.data.toWeeklyAvailability)
-                      && request.resource.data.toAvailabilityTimeZone is string
-                      && request.resource.data.toAvailabilityTimeZone.size() > 0
-                      && request.resource.data.toAvailabilityTimeZone.size() <= 80
-                      && request.resource.data.toAvailabilityUpdatedAt == request.time
-                      && request.resource.data.updatedAt == request.time
+                        .hasOnly(['scheduleStatus', 'scheduleSelectedIndex', 'scheduledAt', 'updatedAt'])
+                      && request.resource.data.scheduleStatus == 'confirmed'
+                      && resource.data.scheduleOptions is list
+                      && request.resource.data.scheduleSelectedIndex is int
+                      && request.resource.data.scheduleSelectedIndex >= 0
+                      && request.resource.data.scheduleSelectedIndex < resource.data.scheduleOptions.size()
+                      && resource.data.scheduleOptions[request.resource.data.scheduleSelectedIndex] is timestamp
+                      && resource.data.scheduleOptions[request.resource.data.scheduleSelectedIndex] > request.time
+                      && request.resource.data.scheduledAt
+                        == resource.data.scheduleOptions[request.resource.data.scheduleSelectedIndex]
+                      && request.resource.data.updatedAt is timestamp
                     ) || (
                       isParticipant(resource.data)
                       && isActiveUser()
@@ -674,7 +580,9 @@ service cloud.firestore {
                       'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
                     ])
                     && request.resource.data.keys().hasOnly([
-                      'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                      'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt',
+                      'startAt', 'durationMinutes', 'scheduleMode', 'scheduleTimeZone',
+                      'schedulePlatform', 'scheduleVenue'
                     ])
                     && request.resource.data.actorId == request.auth.uid
                     && request.resource.data.recipientId is string
@@ -684,6 +592,9 @@ service cloud.firestore {
                     && (
                       (
                         request.resource.data.kind == 'swap_request'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                        ])
                         && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
                           == request.auth.uid
@@ -694,6 +605,9 @@ service cloud.firestore {
                       )
                       || (
                         request.resource.data.kind == 'swap_accepted'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                        ])
                         && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
                           == request.auth.uid
@@ -704,6 +618,9 @@ service cloud.firestore {
                       )
                       || (
                         request.resource.data.kind == 'swap_declined'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                        ])
                         && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
                         && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
                           == request.auth.uid
@@ -714,6 +631,9 @@ service cloud.firestore {
                       )
                       || (
                         request.resource.data.kind == 'category_request'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt'
+                        ])
                         && existsAfter(/databases/$(database)/documents/categoryRequests/$(request.resource.data.requestId))
                         && getAfter(/databases/$(database)/documents/categoryRequests/$(request.resource.data.requestId)).data.requesterId
                           == request.auth.uid
@@ -724,6 +644,115 @@ service cloud.firestore {
                           == 'admin'
                         && get(/databases/$(database)/documents/users/$(request.resource.data.recipientId)).data.get('status', 'active')
                           == 'active'
+                      )
+                      || (
+                        request.resource.data.kind == 'schedule_proposed'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt',
+                          'startAt', 'durationMinutes', 'scheduleMode', 'scheduleTimeZone',
+                          'schedulePlatform', 'scheduleVenue'
+                        ])
+                        && request.resource.data.startAt is timestamp
+                        && request.resource.data.durationMinutes is int
+                        && request.resource.data.durationMinutes > 0
+                        && request.resource.data.durationMinutes <= 960
+                        && request.resource.data.scheduleMode in ['online', 'onsite']
+                        && request.resource.data.scheduleTimeZone is string
+                        && request.resource.data.scheduleTimeZone.size() > 0
+                        && request.resource.data.scheduleTimeZone.size() <= 80
+                        && request.resource.data.schedulePlatform is string
+                        && request.resource.data.schedulePlatform.size() <= 80
+                        && request.resource.data.scheduleVenue is string
+                        && request.resource.data.scheduleVenue.size() <= 240
+                        && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.status
+                          == 'accepted'
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleStatus
+                          == 'proposed'
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleProposerId
+                          == request.auth.uid
+                        && (
+                          (
+                            getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
+                              == request.auth.uid
+                            && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
+                              == request.resource.data.recipientId
+                          )
+                          || (
+                            getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
+                              == request.auth.uid
+                            && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
+                              == request.resource.data.recipientId
+                          )
+                        )
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleOptions[0]
+                          == request.resource.data.startAt
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleDurationMinutes
+                          == request.resource.data.durationMinutes
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleMode
+                          == request.resource.data.scheduleMode
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleTimeZone
+                          == request.resource.data.scheduleTimeZone
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.schedulePlatform
+                          == request.resource.data.schedulePlatform
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleVenue
+                          == request.resource.data.scheduleVenue
+                      )
+                      || (
+                        request.resource.data.kind == 'schedule_confirmed'
+                        && request.resource.data.keys().hasOnly([
+                          'recipientId', 'actorId', 'requestId', 'kind', 'read', 'createdAt',
+                          'startAt', 'durationMinutes', 'scheduleMode', 'scheduleTimeZone',
+                          'schedulePlatform', 'scheduleVenue'
+                        ])
+                        && request.resource.data.startAt is timestamp
+                        && request.resource.data.durationMinutes is int
+                        && request.resource.data.durationMinutes > 0
+                        && request.resource.data.durationMinutes <= 960
+                        && request.resource.data.scheduleMode in ['online', 'onsite']
+                        && request.resource.data.scheduleTimeZone is string
+                        && request.resource.data.scheduleTimeZone.size() > 0
+                        && request.resource.data.scheduleTimeZone.size() <= 80
+                        && request.resource.data.schedulePlatform is string
+                        && request.resource.data.schedulePlatform.size() <= 80
+                        && request.resource.data.scheduleVenue is string
+                        && request.resource.data.scheduleVenue.size() <= 240
+                        && existsAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId))
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.status
+                          == 'accepted'
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleStatus
+                          == 'confirmed'
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduleProposerId
+                          in [request.resource.data.actorId, request.resource.data.recipientId]
+                        && (
+                          (
+                            getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
+                              == request.resource.data.actorId
+                            && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
+                              == request.resource.data.recipientId
+                          )
+                          || (
+                            getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.toUserId
+                              == request.resource.data.actorId
+                            && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.fromUserId
+                              == request.resource.data.recipientId
+                          )
+                        )
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.scheduledAt
+                          == request.resource.data.startAt
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get(
+                          'scheduleDurationMinutes',
+                          getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get('durationMinutes', 120)
+                        )
+                          == request.resource.data.durationMinutes
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get('scheduleMode', 'online')
+                          == request.resource.data.scheduleMode
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get('scheduleTimeZone', 'UTC')
+                          == request.resource.data.scheduleTimeZone
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get('schedulePlatform', '')
+                          == request.resource.data.schedulePlatform
+                        && getAfter(/databases/$(database)/documents/swapRequests/$(request.resource.data.requestId)).data.get('scheduleVenue', '')
+                          == request.resource.data.scheduleVenue
                       )
                     );
 
