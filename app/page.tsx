@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { SkillSwapLogo } from "@/components/skill-swap-logo";
 import { useAuth } from "@/lib/auth-context";
 import { getAuthErrorMessage } from "@/lib/auth-errors";
 import { useTheme } from "@/lib/theme-context";
@@ -71,11 +72,7 @@ export default function Home() {
       <aside className="welcome-panel">
         <div className="welcome-grid" aria-hidden="true" />
         <Link className="brand" href="/" aria-label="Skill Swap home">
-          <span className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-          </span>
-          <span>skill swap</span>
+          <SkillSwapLogo />
         </Link>
 
         <div className="welcome-copy">

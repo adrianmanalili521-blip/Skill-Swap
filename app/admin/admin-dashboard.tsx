@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { SkillSwapLogo } from "@/components/skill-swap-logo";
 import {
   collection,
   doc,
@@ -1027,7 +1028,7 @@ export default function AdminDashboard() {
   const chartData = buckets;
   return <main className="dashboard-shell admin-shell" data-theme={theme}>
     <aside className="admin-sidebar">
-      <Link className="admin-brand" href="/dashboard"><span className="dashboard-brand-mark" aria-hidden="true">s</span><span>skill swap</span></Link>
+      <Link className="admin-brand" href="/dashboard"><SkillSwapLogo /></Link>
       <p className="admin-sidebar-label">WORKSPACE</p>
       <nav className="admin-sidebar-nav" aria-label="Admin navigation">
         {navigation.map((item) => <button key={item.id} type="button"
@@ -1045,7 +1046,7 @@ export default function AdminDashboard() {
 
     <section className="admin-content">
       <header className="admin-topbar">
-        <div className="admin-mobile-brand"><span className="dashboard-brand-mark" aria-hidden="true">s</span><span>skill swap</span></div>
+        <div className="admin-mobile-brand"><SkillSwapLogo /></div>
         <label className="admin-global-search">
           <span aria-hidden="true">⌕</span>
           <span className="visually-hidden">Search current section</span>
